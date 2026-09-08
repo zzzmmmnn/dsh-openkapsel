@@ -21,6 +21,6 @@ test('remote preset excludes every local filesystem and shell provider', () => {
   for (const packageName of forbidden) {
     assert.equal(preset.includes(packageName), false, packageName);
   }
-  assert.match(preset, /name: 'dsh-kapsel'/);
+  assert.match(preset, /name: 'dsh-openkapsel'/);
   assert.match(preset, /enforceRemoteOnly: true/);
 });

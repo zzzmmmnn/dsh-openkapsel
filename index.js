@@ -1,5 +1,5 @@
 /**
- * dsh-kapsel — OpenKapsel workspace bridge for the DeepSeek Harness.
+ * dsh-openkapsel — OpenKapsel workspace bridge for the DeepSeek Harness.
  *
  * A thin Host-side Cordis plugin. It does NOT reimplement the OpenKapsel REST
  * client in Node; instead it REUSES the workspace-published `openkapsel-rest`
@@ -59,14 +59,11 @@ export const REMOTE_TOOL_NAMES = Object.freeze([
   'kapsel_task_output',
 ]);
 
-// These tools do not expose the host filesystem or host shell. `run_code` is
-// the DSH presentation transport used when the host selects PTC mode; its
-// nested tool calls still pass through the same guard.
+// No model-authored code runtime is admitted on the DSH host.
 export const SAFE_AUXILIARY_TOOL_NAMES = Object.freeze([
   'skill',
   'ask_user_question',
   'todo_write',
-  'run_code',
 ]);
 
 const REMOTE_ONLY_TOOL_NAMES = new Set([
@@ -88,7 +85,10 @@ const REMOTE_WRITE_ESCALATION_PARAMETERS = {
   },
 };
 
-function shellQuote(value) {
+export function shellQuote(value) {
+  if (String(value).includes('\0')) {
+    throw new Error('Shell transport arguments must not contain NUL');
+  }
   // POSIX single-quote escaping: 'x' -> '\''  within '…'.
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
@@ -120,7 +120,7 @@ function resolvedTaskname(...values) {
 }
 
 function resolvedMessage(value) {
-  return firstNonEmptyText([value], 'dsh-kapsel operation', MESSAGE_MAX);
+  return firstNonEmptyText([value], 'dsh-openkapsel operation', MESSAGE_MAX);
 }
 
 export function apply(ctx, config = {}) {
@@ -128,9 +128,9 @@ export function apply(ctx, config = {}) {
   const sandboxPolicy = ctx.sandboxPolicy; // injected
 
   const dshHome = process.env.DSH_HOME || join(homedir(), '.dsh');
-  const stateRoot = config.stateDir || join(dshHome, 'state', 'dsh-kapsel');
+  const stateRoot = config.stateDir || join(dshHome, 'state', 'dsh-openkapsel');
   if (!isAbsolute(stateRoot)) {
-    throw new Error('dsh-kapsel: stateDir must be an absolute path');
+    throw new Error('dsh-openkapsel: stateDir must be an absolute path');
   }
   mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
   chmodSync(stateRoot, 0o700);
@@ -144,7 +144,7 @@ export function apply(ctx, config = {}) {
 
   function policyOf(exec) {
     if (!exec?.agent?.session) {
-      throw new Error('dsh-kapsel: tool execution is missing its owning session');
+      throw new Error('dsh-openkapsel: tool execution is missing its owning session');
     }
     return sandboxPolicy.resolve({ session: exec.agent.session });
   }
@@ -181,13 +181,13 @@ export function apply(ctx, config = {}) {
   function stateOf(exec) {
     const agent = exec?.agent;
     if (!agent || (typeof agent !== 'object' && typeof agent !== 'function')) {
-      throw new Error('dsh-kapsel: tool execution is missing its owning agent');
+      throw new Error('dsh-openkapsel: tool execution is missing its owning agent');
     }
     let state = sessionStates.get(agent);
     if (state) return state;
 
     const agentId = String(agent.id ?? agent.session?.header?.id ?? '');
-    if (!agentId) throw new Error('dsh-kapsel: owning agent has no session id');
+    if (!agentId) throw new Error('dsh-openkapsel: owning agent has no session id');
     const directoryName = createHash('sha256').update(agentId).digest('hex');
     const directory = join(stateRoot, directoryName);
     mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -275,7 +275,7 @@ export function apply(ctx, config = {}) {
     }
     if (!allowCreate) return null;
     const created = await http('POST', 'context', {
-      json: { type: 'plan', taskname, content: 'DeepSeek Harness (dsh-kapsel) workspace access session.' },
+      json: { type: 'plan', taskname, content: 'DeepSeek Harness (dsh-openkapsel) workspace access session.' },
       exec,
       signal: exec.signal,
     });
@@ -749,9 +749,10 @@ export function apply(ctx, config = {}) {
   for (const tool of tools) ctx.tools.register(tool);
 
   if (config.enforceRemoteOnly !== false) {
+    ctx.tools.presentAs('native');
     ctx.tools.guard((exec) => {
       if (REMOTE_ONLY_TOOL_NAMES.has(exec.name)) return undefined;
-      return `dsh-kapsel remote-only mode denied local or undeclared tool "${exec.name}"`;
+      return `dsh-openkapsel remote-only mode denied local or undeclared tool "${exec.name}"`;
     });
   }
 

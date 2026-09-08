@@ -1,6 +1,6 @@
 {
-  "name": "dsh-kapsel",
-  "version": "0.4.1",
+  "name": "dsh-openkapsel",
+  "version": "0.5.0",
   "description": "OpenKapsel workspace bridge for the DeepSeek Harness: operate a remote OpenKapsel workspace (files, shell, context, memory, sharing, preview) through skill-driven tool calls using only its workspace URL and control token.",
   "type": "module",
   "main": "index.js",
@@ -8,7 +8,7 @@
     ".": "./index.js"
   },
   "bin": {
-    "dsh-kapsel-install-preset": "./bin/install-preset.js"
+    "dsh-openkapsel-install-preset": "./bin/install-preset.js"
   },
   "scripts": {
     "test": "node --test tests/*.test.js"

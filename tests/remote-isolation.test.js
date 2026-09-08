@@ -61,7 +61,7 @@ function requestBody(request) {
 }
 
 test('two agents mutate only their own remote workspace and never the local cwd', async () => {
-  const temporary = mkdtempSync(join(tmpdir(), 'dsh-kapsel-test-'));
+  const temporary = mkdtempSync(join(tmpdir(), 'dsh-openkapsel-test-'));
   const stateDir = join(temporary, 'state');
   const localA = join(temporary, 'local-a');
   const localB = join(temporary, 'local-b');
@@ -148,6 +148,9 @@ test('two agents mutate only their own remote workspace and never the local cwd'
       },
     },
     tools: {
+      presentAs(mode) {
+        assert.equal(mode, 'native');
+      },
       register(tool) {
         registered.set(tool.name, tool);
         return () => registered.delete(tool.name);
@@ -184,6 +187,7 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     assert.deepEqual([...registered.keys()].sort(), [...REMOTE_TOOL_NAMES].sort());
     assert.equal(guards.length, 1);
     assert.match(guards[0]({ name: 'bash' }), /denied/);
+    assert.match(guards[0]({ name: 'run_code' }), /denied/);
     assert.equal(guards[0]({ name: 'kapsel_fs_write' }), undefined);
 
     mkdirSync(localA);
@@ -353,7 +357,7 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     }, { agent: agentA, signal });
     assert.equal(writeBodies.at(-1).plan_id, 1);
     assert.equal(writeBodies.at(-1).taskname, 'restored-task');
-    assert.equal(writeBodies.at(-1).message, 'dsh-kapsel operation');
+    assert.equal(writeBodies.at(-1).message, 'dsh-openkapsel operation');
     assert.equal(readFileSync(join(localA, 'sentinel.txt'), 'utf8'), 'unchanged-a');
     assert.equal(readFileSync(join(localB, 'sentinel.txt'), 'utf8'), 'unchanged-b');
     assert.equal(readdirSync(localA).includes('.openkapsel.env'), false);

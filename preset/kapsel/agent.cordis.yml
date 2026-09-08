@@ -22,7 +22,7 @@
     allowParallelInProgress: true
 
 - id: tool-kapsel
-  name: 'dsh-kapsel'
+  name: 'dsh-openkapsel'
   config:
     taskname: dsh
     enforceRemoteOnly: true

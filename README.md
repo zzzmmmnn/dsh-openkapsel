@@ -1,4 +1,4 @@
-# dsh-kapsel
+# dsh-openkapsel
 
 OpenKapsel workspace bridge for the **DeepSeek Harness**. It turns a remote
 OpenKapsel workspace into model-visible tools: supply the read-only workspace
@@ -46,7 +46,7 @@ local development, a symlink is sufficient (adapt the DSH path if needed):
 
 ```bash
 DSH_PACKAGE_DIR="$(npm root -g)/@deepseek-ai/dsh"
-ln -s "$PWD" "$DSH_PACKAGE_DIR/node_modules/dsh-kapsel"
+ln -s "$PWD" "$DSH_PACKAGE_DIR/node_modules/dsh-openkapsel"
 ```
 
 It reuses the DSH installation's `@deepseek-ai/dsh-tools` peer dependency. A
@@ -56,9 +56,9 @@ dependency.
 Install the bundled mode:
 
 ```bash
-dsh-kapsel-install-preset
+dsh-openkapsel-install-preset
 # Replace an older locally authored Kapsel preset:
-dsh-kapsel-install-preset --force
+dsh-openkapsel-install-preset --force
 ```
 
 The target is `$DSH_HOME/.agent-presets/kapsel`, or
@@ -68,7 +68,7 @@ sessions keep their original preset.
 
 ## Remote-only preset
 
-Do not add `dsh-kapsel` to `standard` or `minimal`: both expose host-local
+Do not add `dsh-openkapsel` to `standard` or `minimal`: both expose host-local
 tools. The bundled preset intentionally omits host Bash/PowerShell,
 filesystem/search/editor, job control, local `AGENTS.md` discovery, and local
 skill discovery. It retains only the OpenKapsel bridge plus `skill`,
@@ -77,8 +77,8 @@ skill discovery. It retains only the OpenKapsel bridge plus `skill`,
 The plugin also installs a fail-closed tool guard. Accidentally composing an
 undeclared or local tool therefore causes execution to be denied even if a
 future preset edit makes that tool visible to the model. DSH's optional
-`run_code` presentation transport is allowed, but every nested tool dispatch
-still passes through the same guard.
+`run_code` presentation transport is denied. Remote-only mode explicitly selects
+native tools, so model-authored code is not executed through a host code runtime.
 
 ### DSH sandbox-mode mapping
 
@@ -109,13 +109,13 @@ The bridge row inside the bundled preset is:
 
 ```yaml
 - id: tool-kapsel
-  name: 'dsh-kapsel'
+  name: 'dsh-openkapsel'
   config:
     taskname: dsh
     enforceRemoteOnly: true
 ```
 
-`dsh-kapsel` consumes the host `shell`, `tools`, `skills`, and `sandboxPolicy` services and
+`dsh-openkapsel` consumes the host `shell`, `tools`, `skills`, and `sandboxPolicy` services and
 publishes none. Mount it in the dedicated agent preset, not globally.
 
 ## Usage
@@ -143,7 +143,7 @@ their `plan_id` fields describe the Context graph rather than ordinary
 operation attribution; prefer `kapsel_plan_update` for Plan changes.
 
 Each DSH agent is keyed separately by `agent.id`. Credentials live under
-`$DSH_HOME/state/dsh-kapsel/<sha256(agent.id)>/.openkapsel.env`; active Plan and
+`$DSH_HOME/state/dsh-openkapsel/<sha256(agent.id)>/.openkapsel.env`; active Plan and
 taskname values are held in an agent-keyed `WeakMap`. The local project cwd is
 not used for credentials or remote-workspace selection. An absolute `stateDir`
 plugin option can replace the default private state root.
@@ -158,6 +158,32 @@ missing or blank `message` receives a short default operation message.
 
 ## Security notes
 
+Typed tools are convenience wrappers, not an additional permission boundary.
+`kapsel_http` exposes the REST surfaces available to the selected credential;
+the remote server enforces endpoint, path, and capability authorization. DSH
+read-only mode additionally denies mutating HTTP methods and Shell execution.
+This assumes that GET/HEAD endpoints honor read semantics; project application
+routes implement their own behavior and authorization.
+
+The current DSH Shell service accepts a command string, not an argv array.
+The bridge quotes each argument independently using POSIX single quoting and
+rejects NUL, which operating-system arguments cannot contain. Generated tests
+round-trip quotes, newlines, substitutions, backslashes, and Unicode through
+Bash to verify the resulting argv. Helpers retain their DSH sandbox policy.
+
+Version 0.5.0 renames the package, installer command, and default state directory
+to `dsh-openkapsel`. Reinstall the preset and initialize credentials again after
+upgrading. To reuse an existing private state directory, explicitly configure
+`stateDir` to that directory. Tool names (`kapsel_*`) and the `kapsel` preset ID
+remain stable.
+
+## Development checks
+
+Run `npm ci` and `npm test`. GitHub Actions checks Node.js 22/24 with Python
+3.10/3.14, including the Shell argument round-trip and remote permission tests.
+
+## Operational notes
+
 - The control token is stored only in the session-private credential file with
   mode `0600`. Neither the token nor its host-private path is returned in tool
   results.
@@ -168,7 +194,7 @@ missing or blank `message` receives a short default operation message.
 - Tokens go only to the workspace origin or documented transfer paths, never to
   preview or public-share URLs.
 - The model-facing guard permits only `kapsel_*`, `skill`,
-  `ask_user_question`, `todo_write`, and the optional `run_code` transport.
+  `ask_user_question`, and `todo_write`.
 
 ## Verification
 

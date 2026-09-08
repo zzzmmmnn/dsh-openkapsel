@@ -1,10 +1,10 @@
-# Example composition row for dsh-kapsel.
+# Example composition row for dsh-openkapsel.
 #
 # This file is an excerpt for reference. Do not add this row to `standard` or
 # `minimal`: those presets expose host Shell/filesystem tools. Install the
 # package's dedicated `preset/kapsel` composition instead.
 
-# dsh-kapsel publishes NO service: it consumes the host `shell` (bash executor),
+# dsh-openkapsel publishes NO service: it consumes the host `shell` (bash executor),
 # `tools`, `skills`, and `sandboxPolicy` services (like `tool-fs` / `tool-web`).
 # It must NOT be wrapped in an `isolate` realm.
 #
@@ -13,8 +13,8 @@
 # keyed by the session id. Nothing is written into the local project cwd.
 
 - id: tool-kapsel
-  name: 'dsh-kapsel'
+  name: 'dsh-openkapsel'
   config:
     taskname: dsh
     enforceRemoteOnly: true
-    # stateDir: /absolute/private/path  # default: $DSH_HOME/state/dsh-kapsel
+    # stateDir: /absolute/private/path  # default: $DSH_HOME/state/dsh-openkapsel
