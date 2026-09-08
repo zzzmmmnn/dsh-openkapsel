@@ -1,0 +1,20 @@
+# Example composition row for dsh-kapsel.
+#
+# This file is an excerpt for reference. Do not add this row to `standard` or
+# `minimal`: those presets expose host Shell/filesystem tools. Install the
+# package's dedicated `preset/kapsel` composition instead.
+
+# dsh-kapsel publishes NO service: it consumes the host `shell` (bash executor),
+# `tools`, `skills`, and `sandboxPolicy` services (like `tool-fs` / `tool-web`).
+# It must NOT be wrapped in an `isolate` realm.
+#
+# Credentials are NOT fixed here. They are supplied per session through the
+# `kapsel_config` tool and stored under the plugin's private DSH state root,
+# keyed by the session id. Nothing is written into the local project cwd.
+
+- id: tool-kapsel
+  name: 'dsh-kapsel'
+  config:
+    taskname: dsh
+    enforceRemoteOnly: true
+    # stateDir: /absolute/private/path  # default: $DSH_HOME/state/dsh-kapsel

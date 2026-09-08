@@ -1,0 +1,57 @@
+{
+  "name": "dsh-kapsel",
+  "version": "0.4.1",
+  "description": "OpenKapsel workspace bridge for the DeepSeek Harness: operate a remote OpenKapsel workspace (files, shell, context, memory, sharing, preview) through skill-driven tool calls using only its workspace URL and control token.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "bin": {
+    "dsh-kapsel-install-preset": "./bin/install-preset.js"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  },
+  "files": [
+    "index.js",
+    "bin/",
+    "preset/",
+    "skill/",
+    "tests/",
+    "README.md",
+    "cordis.example.yml"
+  ],
+  "keywords": [
+    "deepseek-harness",
+    "cordis",
+    "openkapsel",
+    "workspace",
+    "mcp-capabilities"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-sandbox": "*",
+    "@deepseek-ai/dsh-tools": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": false
+    },
+    "@deepseek-ai/dsh-sandbox": {
+      "optional": false
+    },
+    "@deepseek-ai/dsh-tools": {
+      "optional": false
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.2",
+    "@deepseek-ai/dsh-sandbox": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-tools": "0.1.2-rc.1"
+  }
+}

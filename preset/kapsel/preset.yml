@@ -1,0 +1,3 @@
+name: OpenKapsel Remote
+description: 仅通过 OpenKapsel 远程文件、Shell 与 REST 工具工作的隔离 Agent。
+order: 5
