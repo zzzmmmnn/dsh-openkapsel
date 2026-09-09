@@ -23,7 +23,8 @@ function fakeShell(specs) {
     run(spec) {
       specs.push(spec);
       return new Promise((resolve) => {
-        execCommand(spec.command, {
+        const child = execCommand(spec.command, {
+          shell: process.platform === 'win32' ? 'pwsh.exe' : '/bin/bash',
           cwd: spec.workdir,
           maxBuffer: spec.stdoutMaxBytes,
           timeout: spec.timeoutMs,
@@ -37,6 +38,8 @@ function fakeShell(specs) {
             stderr: { text: stderr },
           });
         });
+        child.stdin.on('error', () => {});
+        child.stdin.end(spec.stdin);
       });
     },
   };
@@ -369,8 +372,9 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     assert.ok(shellSpecs.length >= 6);
     for (const spec of shellSpecs) {
       assert.equal(spec.sandboxPolicy.mode, 'workspace-write');
-      assert.ok(spec.sandboxPolicy.workspaceRoot.startsWith(`${stateDir}/`));
-      assert.match(spec.command, /^'python3' '-B' '-E' '-s' /);
+      assert.ok(spec.sandboxPolicy.workspaceRoot.startsWith(join(stateDir, '')));
+      assert.match(spec.command, /python3? -B -E -s -c/);
+      assert.equal(typeof spec.stdin, 'string');
     }
   } finally {
     await new Promise((resolve) => server.close(resolve));

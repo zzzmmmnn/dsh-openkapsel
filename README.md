@@ -14,8 +14,8 @@ the harness host Shell service. The model cannot choose the script or use that
 service as a Shell tool. Authentication, Context attribution
 (`plan_id`/`taskname`/`message`), REST error decoding, and credential renewal
 stay owned by the maintained skill code. Every helper subprocess receives an
-explicit DSH `workspace-write` policy whose only writable root is that agent's
-private state directory.
+explicit DSH `workspace-write` policy rooted at that agent's private state
+directory; the executor also controls any platform temporary-directory access.
 
 ## Compatibility and permissions
 
@@ -23,11 +23,11 @@ private state directory.
 |---|---|
 | DSH | Tested with DSH `0.1.2-rc.1`, the `web` profile, and the bundled **OpenKapsel Remote** preset. Other profiles are not verified. |
 | Node.js | Package declares `>=18`; the test matrix covers Node.js 22 and 24. Use a version supported by your DSH installation; Node.js 18 is not covered by this project's CI. |
-| Python | Python 3.10+ available as `python3` on the DSH Host's `PATH`; the test matrix covers 3.10 and 3.14. |
-| Host platform | GitHub installation and Host startup verified on macOS; CI runs on Linux. A POSIX Shell service is required; Windows is not verified. |
+| Python | Python 3.10+ on the Host's `PATH`: `python` on Windows, `python3` on macOS/Linux. The test matrix covers 3.10 and 3.14. |
+| Host platform | macOS/Linux use DSH's Bash executor; Windows uses DSH's PowerShell executor without Bash. GitHub installation and Host startup verified on macOS; Linux/Windows tests are configured in CI. Windows Host integration still requires verification on a Windows DSH installation. |
 | External service | Requires a reachable, user-selected OpenKapsel Server and its Workspace URL/control token. Requests and their supplied file contents or commands are sent to that server. |
 | Local access | Runs fixed Python helpers through DSH's Shell service and writes session credentials under `$DSH_HOME/state/dsh-openkapsel` (default `~/.dsh/state/dsh-openkapsel`). Model-facing host file/Shell tools and `run_code` are denied. |
-| Credentials | Stores the read URL and control token in a `0600` `.openkapsel.env` inside a `0700` session directory. Automatic renewal may replace the stored credentials. |
+| Credentials | Stores the read URL and control token under the user's DSH state directory. Unix uses `0600` files and `0700` directories; Windows relies on the containing user directory's ACL (chmod does not enforce Unix permissions there). Automatic renewal may replace stored credentials. |
 | Remote permissions | Can read, modify, and run Shell commands within the remote token's grants. Typed tools are conveniences; the server enforces authorization for generic REST calls too. |
 | DSH policy | `read-only` denies remote mutations and Shell; a one-call approval may authorize a retry. `workspace-write` and `danger-full-access` both remain bounded by the remote token. |
 | License | [MIT](LICENSE). This is a community plugin, not an official DeepSeek product. |
@@ -38,10 +38,10 @@ An installed Cordis package could implement the transport in Node. This bridge
 keeps Python because the existing helpers already own renewal, authentication,
 error decoding, and Context merging. Reusing them avoids a second protocol
 implementation that could drift as OpenKapsel evolves. This does not grant the
-model a local Shell: script paths are plugin-owned constants and all arguments
-are quoted.
+model a local Shell: script paths are plugin-owned constants and arguments
+travel as JSON on stdin to a fixed Python bootstrap.
 
-Requires `python3` on `PATH`.
+Requires `python` on Windows or `python3` on macOS/Linux on `PATH`.
 
 ## Layout
 
@@ -81,8 +81,9 @@ sessions keep their original preset. Supply your OpenKapsel Workspace URL and
 matching control token through `kapsel_config` to connect the remote workspace.
 
 The GitHub installation and profile-scoped installer were verified locally;
-the installed package passed all four tests and the DSH web Host started
-successfully. Python 3 must be available as `python3` on the Host's PATH.
+the installed package passed its tests and the DSH web Host started
+successfully on macOS. On Windows, run these same commands from PowerShell;
+ensure `python --version` resolves to Python 3.10 or newer. Bash is not required.
 
 ## Remote-only preset
 
@@ -188,10 +189,12 @@ This assumes that GET/HEAD endpoints honor read semantics; project application
 routes implement their own behavior and authorization.
 
 The current DSH Shell service accepts a command string, not an argv array.
-The bridge quotes each argument independently using POSIX single quoting and
-rejects NUL, which operating-system arguments cannot contain. Generated tests
-round-trip quotes, newlines, substitutions, backslashes, and Unicode through
-Bash to verify the resulting argv. Helpers retain their DSH sandbox policy.
+The bridge sends helper paths and arguments as ASCII JSON on stdin to a fixed
+Python bootstrap. Model input never enters the Host Shell command text. NUL
+arguments are rejected. Generated tests round-trip quotes, newlines,
+substitutions, backslashes, empty strings, and Unicode through Bash on Unix and
+PowerShell 7/Windows PowerShell 5.1 on Windows. Helpers retain their DSH sandbox
+policy, and their exit codes propagate through PowerShell.
 
 Version 0.5.0 renames the package, installer command, and default state directory
 to `dsh-openkapsel`. Reinstall the preset and initialize credentials again after
@@ -202,12 +205,13 @@ remain stable.
 ## Development checks
 
 Run `npm ci` and `npm test`. GitHub Actions checks Node.js 22/24 with Python
-3.10/3.14, including the Shell argument round-trip and remote permission tests.
+3.10/3.14 on Linux and Windows, including helper argument round-trip and remote
+permission tests.
 
 ## Operational notes
 
 - The control token is stored only in the session-private credential file with
-  mode `0600`. Neither the token nor its host-private path is returned in tool
+  Unix mode `0600` (Windows uses inherited directory ACLs). Neither the token nor its host-private path is returned in tool
   results.
 - The read token in the workspace URL is read-only; the control token unlocks
   writes, Shell, Context, Memory, and sharing.

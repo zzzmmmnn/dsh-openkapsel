@@ -5,7 +5,7 @@
  * client in Node; instead it REUSES the workspace-published `openkapsel-rest`
  * skill's own Python helpers (`openkapsel_http.py`, `openkapsel_config.py`),
  * which are vendored under `skill/`. Each `kapsel_*` tool shells out to those
- * helpers through the harness `shell` (bash) executor, so authentication,
+ * helpers through the harness `shell` executor (Bash or Windows PowerShell), so authentication,
  * Context attribution, error handling, and credential renewal stay owned by the
  * maintained skill code — not by this plugin.
  *
@@ -19,7 +19,7 @@
  *   3. The typed tools and the generic `kapsel_http` execute
  *      `openkapsel_http.py METHOD endpoint …` in that private state directory.
  *
- * Requires `python3` on PATH (the skill itself is Python).
+ * Requires `python` on Windows or `python3` on Unix on PATH.
  */
 import { chmodSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -27,6 +27,7 @@ import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { isAbsolute, join } from 'node:path';
 import { defineTool } from '@deepseek-ai/dsh-tools';
+import { helperTransport } from './helper-transport.js';
 import { approveEscalation, validateEscalationArgs } from '@deepseek-ai/dsh-sandbox';
 
 export const name = 'kapsel';
@@ -84,14 +85,6 @@ const REMOTE_WRITE_ESCALATION_PARAMETERS = {
       'Required with sandbox_permissions: one sentence explaining why this remote workspace mutation is needed.',
   },
 };
-
-export function shellQuote(value) {
-  if (String(value).includes('\0')) {
-    throw new Error('Shell transport arguments must not contain NUL');
-  }
-  // POSIX single-quote escaping: 'x' -> '\''  within '…'.
-  return `'${String(value).replace(/'/g, `'\\''`)}'`;
-}
 
 function parseJson(text) {
   try {
@@ -207,10 +200,10 @@ export function apply(ctx, config = {}) {
 
   /** Run a Python helper, capturing stdout; throws on non-zero exit. */
   async function runPython(argvTail, { script, workdir, sessionId, timeoutMs, stdoutMaxBytes, signal } = {}) {
-    const command = ['python3', '-B', '-E', '-s', script, ...argvTail].map(shellQuote).join(' ');
+    const transport = helperTransport(script, argvTail);
     const result = await shell.run(
       shell.resolve({
-        command,
+        ...transport,
         workdir,
         timeoutMs,
         stdoutMaxBytes: stdoutMaxBytes ?? 4_000_000,
