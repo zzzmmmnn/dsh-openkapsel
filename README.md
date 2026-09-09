@@ -47,6 +47,9 @@ Requires `python` on Windows or `python3` on macOS/Linux on `PATH`.
 
 ```text
 index.js                Host-side Cordis plugin and typed remote tools
+bundle.js               Profile bootstrap that installs only the preset
+cordis.patch.yml        DSH bundle entry point (no global tool guard)
+preset-install.js       Shared, update-safe preset installer
 skill/openkapsel-rest/  Vendored REST skill and fixed Python helpers
 preset/kapsel/          Remote-only agent preset shown in DSH's mode picker
 bin/install-preset.js   Installs the preset into the DSH user preset root
@@ -56,19 +59,21 @@ tests/                  Tool-catalog and remote-isolation tests
 
 ## Install
 
-Install from GitHub into the DSH `web` profile, then install the bundled preset:
+Install from GitHub into the DSH `web` profile:
 
 ```bash
 dsh plugin --profile web add github:zzzmmmnn/dsh-openkapsel
-dsh plugin --profile web exec dsh-openkapsel-install-preset
 ```
 
 No manual symlink or local source checkout is required. DSH manages the package
-as a profile dependency. A warning that the package declares no `dsh.bundle`
-is expected: this plugin is loaded by the dedicated OpenKapsel Remote preset,
-not as a global profile layer.
+as a profile dependency. Its `dsh.bundle` patch loads a lightweight bootstrap
+when the profile starts. The bootstrap installs the OpenKapsel Remote preset;
+it does not register tools, enable the remote-only guard, or change the default
+preset. Tools and the guard load only when you select OpenKapsel Remote.
 
-To replace an existing preset after updating the package:
+Untouched package-managed presets update automatically on startup. Existing
+identical manual installations are adopted. Locally modified presets are
+preserved and reported instead of overwritten. To explicitly replace one:
 
 ```bash
 dsh plugin --profile web exec dsh-openkapsel-install-preset --force
@@ -80,7 +85,17 @@ select **OpenKapsel Remote** beside the shipped modes. Existing non-empty
 sessions keep their original preset. Supply your OpenKapsel Workspace URL and
 matching control token through `kapsel_config` to connect the remote workspace.
 
-The GitHub installation and profile-scoped installer were verified locally;
+The installer command without `--force` remains available for manual setup.
+Removing the package does not delete the copied preset or session credentials.
+After uninstalling, remove `$DSH_HOME/.agent-presets/kapsel` if no other profile
+uses it. The preset root is shared by profiles using the same `DSH_HOME`.
+
+Version 0.7.0's packed bundle was installed into a fresh temporary DSH profile
+on macOS: profile composition, Web Host startup, and automatic preset creation
+passed without changing the default `standard` preset. The new bootstrap also
+has automated installation, update, customization-preservation, and isolation tests.
+
+The earlier GitHub installation and profile-scoped installer were verified locally;
 the installed package passed its tests and the DSH web Host started
 successfully on macOS. Windows installation and actual plugin use were also
 confirmed by user testing on 2026-09-09. On Windows, run these same commands from PowerShell;

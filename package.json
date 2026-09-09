@@ -1,11 +1,19 @@
 {
   "name": "dsh-openkapsel",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "OpenKapsel workspace bridge for the DeepSeek Harness: operate a remote OpenKapsel workspace (files, shell, context, memory, sharing, preview) through skill-driven tool calls using only its workspace URL and control token.",
   "type": "module",
   "main": "index.js",
   "exports": {
-    ".": "./index.js"
+    ".": "./index.js",
+    "./bundle": "./bundle.js"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zzzmmmnn/dsh-openkapsel.git"
   },
   "bin": {
     "dsh-openkapsel-install-preset": "./bin/install-preset.js"
@@ -15,6 +23,9 @@
   },
   "files": [
     "index.js",
+    "bundle.js",
+    "preset-install.js",
+    "cordis.patch.yml",
     "helper-transport.js",
     "bin/",
     "preset/",

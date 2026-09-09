@@ -1,0 +1,4 @@
+# Expose the preset without changing the current/default agent.
+- insert:
+    - id: openkapsel-preset-bootstrap
+      name: dsh-openkapsel/bundle
