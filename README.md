@@ -41,30 +41,33 @@ tests/                  Tool-catalog and remote-isolation tests
 
 ## Install
 
-The package must be resolvable from the DSH runtime's `node_modules`. During
-local development, a symlink is sufficient (adapt the DSH path if needed):
+Install from GitHub into the DSH `web` profile, then install the bundled preset:
 
 ```bash
-DSH_PACKAGE_DIR="$(npm root -g)/@deepseek-ai/dsh"
-ln -s "$PWD" "$DSH_PACKAGE_DIR/node_modules/dsh-openkapsel"
+dsh plugin --profile web add github:zzzmmmnn/dsh-openkapsel
+dsh plugin --profile web exec dsh-openkapsel-install-preset
 ```
 
-It reuses the DSH installation's `@deepseek-ai/dsh-tools` peer dependency. A
-published installation may instead use `npm pack`, `npm link`, or a profile
-dependency.
+No manual symlink or local source checkout is required. DSH manages the package
+as a profile dependency. A warning that the package declares no `dsh.bundle`
+is expected: this plugin is loaded by the dedicated OpenKapsel Remote preset,
+not as a global profile layer.
 
-Install the bundled mode:
+To replace an existing preset after updating the package:
 
 ```bash
-dsh-openkapsel-install-preset
-# Replace an older locally authored Kapsel preset:
-dsh-openkapsel-install-preset --force
+dsh plugin --profile web exec dsh-openkapsel-install-preset --force
 ```
 
 The target is `$DSH_HOME/.agent-presets/kapsel`, or
-`~/.dsh/.agent-presets/kapsel` when `DSH_HOME` is unset. New sessions can then
+`~/.dsh/.agent-presets/kapsel` when `DSH_HOME` is unset. Restart DSH. New sessions can then
 select **OpenKapsel Remote** beside the shipped modes. Existing non-empty
-sessions keep their original preset.
+sessions keep their original preset. Supply your OpenKapsel Workspace URL and
+matching control token through `kapsel_config` to connect the remote workspace.
+
+The GitHub installation and profile-scoped installer were verified locally;
+the installed package passed all four tests and the DSH web Host started
+successfully. Python 3 must be available as `python3` on the Host's PATH.
 
 ## Remote-only preset
 
