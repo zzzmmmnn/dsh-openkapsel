@@ -24,7 +24,7 @@ directory; the executor also controls any platform temporary-directory access.
 | DSH | Tested with DSH `0.1.2-rc.1`, the `web` profile, and the bundled **OpenKapsel Remote** preset. Other profiles are not verified. |
 | Node.js | Package declares `>=18`; the test matrix covers Node.js 22 and 24. Use a version supported by your DSH installation; Node.js 18 is not covered by this project's CI. |
 | Python | Python 3.10+ on the Host's `PATH`: `python` on Windows, `python3` on macOS/Linux. The test matrix covers 3.10 and 3.14. |
-| Host platform | macOS/Linux use DSH's Bash executor; Windows uses DSH's PowerShell executor without Bash. GitHub installation and Host startup verified on macOS; Linux/Windows tests are configured in CI. Windows Host integration still requires verification on a Windows DSH installation. |
+| Host platform | macOS/Linux use DSH's Bash executor; Windows uses DSH's PowerShell executor without Bash. GitHub installation and Host startup verified on macOS. Windows installation and actual plugin use confirmed by user testing (2026-09-09). Linux/Windows automated tests are configured in CI. |
 | External service | Requires a reachable, user-selected OpenKapsel Server and its Workspace URL/control token. Requests and their supplied file contents or commands are sent to that server. |
 | Local access | Runs fixed Python helpers through DSH's Shell service and writes session credentials under `$DSH_HOME/state/dsh-openkapsel` (default `~/.dsh/state/dsh-openkapsel`). Model-facing host file/Shell tools and `run_code` are denied. |
 | Credentials | Stores the read URL and control token under the user's DSH state directory. Unix uses `0600` files and `0700` directories; Windows relies on the containing user directory's ACL (chmod does not enforce Unix permissions there). Automatic renewal may replace stored credentials. |
@@ -82,7 +82,8 @@ matching control token through `kapsel_config` to connect the remote workspace.
 
 The GitHub installation and profile-scoped installer were verified locally;
 the installed package passed its tests and the DSH web Host started
-successfully on macOS. On Windows, run these same commands from PowerShell;
+successfully on macOS. Windows installation and actual plugin use were also
+confirmed by user testing on 2026-09-09. On Windows, run these same commands from PowerShell;
 ensure `python --version` resolves to Python 3.10 or newer. Bash is not required.
 
 ## Remote-only preset
