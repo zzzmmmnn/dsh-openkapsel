@@ -71,6 +71,10 @@ successfully. Python 3 must be available as `python3` on the Host's PATH.
 
 ## Remote-only preset
 
+Select **OpenKapsel Remote** in the DSH preset picker:
+
+<img src="screen_shot.png" alt="DSH preset picker with OpenKapsel Remote selected and its English description visible" width="600">
+
 Do not add `dsh-openkapsel` to `standard` or `minimal`: both expose host-local
 tools. The bundled preset intentionally omits host Bash/PowerShell,
 filesystem/search/editor, job control, local `AGENTS.md` discovery, and local
