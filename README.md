@@ -17,6 +17,21 @@ stay owned by the maintained skill code. Every helper subprocess receives an
 explicit DSH `workspace-write` policy whose only writable root is that agent's
 private state directory.
 
+## Compatibility and permissions
+
+| Area | Requirements and scope |
+|---|---|
+| DSH | Tested with DSH `0.1.2-rc.1`, the `web` profile, and the bundled **OpenKapsel Remote** preset. Other profiles are not verified. |
+| Node.js | Package declares `>=18`; the test matrix covers Node.js 22 and 24. Use a version supported by your DSH installation; Node.js 18 is not covered by this project's CI. |
+| Python | Python 3.10+ available as `python3` on the DSH Host's `PATH`; the test matrix covers 3.10 and 3.14. |
+| Host platform | GitHub installation and Host startup verified on macOS; CI runs on Linux. A POSIX Shell service is required; Windows is not verified. |
+| External service | Requires a reachable, user-selected OpenKapsel Server and its Workspace URL/control token. Requests and their supplied file contents or commands are sent to that server. |
+| Local access | Runs fixed Python helpers through DSH's Shell service and writes session credentials under `$DSH_HOME/state/dsh-openkapsel` (default `~/.dsh/state/dsh-openkapsel`). Model-facing host file/Shell tools and `run_code` are denied. |
+| Credentials | Stores the read URL and control token in a `0600` `.openkapsel.env` inside a `0700` session directory. Automatic renewal may replace the stored credentials. |
+| Remote permissions | Can read, modify, and run Shell commands within the remote token's grants. Typed tools are conveniences; the server enforces authorization for generic REST calls too. |
+| DSH policy | `read-only` denies remote mutations and Shell; a one-call approval may authorize a retry. `workspace-write` and `danger-full-access` both remain bounded by the remote token. |
+| License | [MIT](LICENSE). This is a community plugin, not an official DeepSeek product. |
+
 ## Why the internal transport remains Python
 
 An installed Cordis package could implement the transport in Node. This bridge

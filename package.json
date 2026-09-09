@@ -23,11 +23,13 @@
     "cordis.example.yml"
   ],
   "keywords": [
+    "dsh-plugin",
     "deepseek-harness",
     "cordis",
     "openkapsel",
     "workspace",
-    "mcp-capabilities"
+    "remote-execution",
+    "ai-agents"
   ],
   "license": "MIT",
   "engines": {
