@@ -1,5 +1,7 @@
 # dsh-openkapsel
 
+[![Listed on dsh-plugin.org](https://dsh-plugin.org/badges/listed.svg)](https://dsh-plugin.org/plugins/zzzmmmnn/dsh-openkapsel)
+
 OpenKapsel workspace bridge for the **DeepSeek Harness**. It turns a remote
 OpenKapsel workspace into model-visible tools: supply the read-only workspace
 URL ending in `/w/<READ_TOKEN>` and its matching control token, and the agent
