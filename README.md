@@ -1,5 +1,6 @@
 # dsh-openkapsel
 
+[![CI](https://github.com/zzzmmmnn/dsh-openkapsel/actions/workflows/tests.yml/badge.svg)](https://github.com/zzzmmmnn/dsh-openkapsel/actions/workflows/tests.yml)
 [![Listed on dsh-plugin.org](https://dsh-plugin.org/badges/listed.svg)](https://dsh-plugin.org/plugins/zzzmmmnn/dsh-openkapsel)
 
 OpenKapsel workspace bridge for the **DeepSeek Harness**. It turns a remote
