@@ -281,3 +281,31 @@ as read-only: neither requires mutation approval nor creates a Plan. Other POST
 operations retain their existing guard. Query values may be arrays to send
 repeated parameters, e.g. `include: ["*.py", "*.js"]` or `file: ["a", "b"]`.
 The vendored REST skill is synchronized with the main OpenKapsel project.
+
+## Client reconnects and portable text
+
+The bundled REST references track OpenKapsel 1.59.0. Reconnect persistence needs
+client 1.58.0+; explicit text codecs and literal newline handling need server
+1.59.0+ and client file API v3 for direct mapped RPC.
+
+A network disconnect does not stop tasks in the running client process.
+Reconnect and list/query the original task IDs to retrieve output and exit
+status, including tasks that completed offline, or to send stdin/interrupt/kill.
+Deadlines continue offline. Uncollected results remain in bounded client memory;
+the registry limit is max_tasks + 4. Reading through completed output marks a
+result collected; collected results have one-hour/four-record retention and may
+be evicted earlier for capacity. Client process restarts do not restore tasks.
+Do not automatically replay a start whose response was lost.
+
+Text APIs default to UTF-8 without using the host locale. For a non-default
+encoding use `kapsel_http`: pass `encoding` in the `query` for GET `fs/read`,
+in `json` for POST `fs/read_many`, `fs/write`, or `fs/replace`, and in each
+`json.items[]` entry for `fs/replace/batch`. Typed file tools still use their
+existing default encoding; they do not expose this new field.
+
+Supported codecs include UTF-8/BOM, explicit-endian UTF-16, Big5, GBK/GB18030,
+Windows-1252, Latin-1, ASCII, and Shift-JIS. See the bundled files reference for
+exact codec names and BOM rules. There is no guessing or lossy conversion.
+LF, CRLF, and CR remain literal: exact replacements must match original endings,
+and new text chooses its own endings. UTF-8-only byte cursors and search retain
+their existing restrictions.
