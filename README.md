@@ -184,7 +184,13 @@ publishes none. Mount it in the dedicated agent preset, not globally.
 | `kapsel_fs_list` / `kapsel_fs_read` / `kapsel_fs_stat` | Read-side filesystem |
 | `kapsel_fs_write` / `kapsel_fs_replace` | Remote text write/edit |
 | `kapsel_shell_exec` / `kapsel_task_output` | Run and poll a remote Shell task |
+| `kapsel_mappings` | List mapped client directories, online status, and execution policy |
+| `kapsel_fs_copy` / `kapsel_fs_move` / `kapsel_transfer` | Copy or move across workspace and client storage, then inspect/cancel/resume asynchronous transfers |
+| `kapsel_recycle` | List, restore, or explicitly purge an item in the selected storage root |
+| `kapsel_client_task` | List, start, inspect, feed stdin to, interrupt, or kill a process on a connected client |
 | `kapsel_http` | Context, Memory, sharing, preview, schedules, and other REST surfaces |
+
+For client mappings, first call `kapsel_mappings` and inspect the client's reported platform and sandbox mode. `kapsel_client_task` takes an `argv` array and a client export-relative `cwd`; it does not use the server Shell. Client task output is returned as base64 with a `next_offset` cursor. An unsandboxed client task has that client's OS-account permissions. Mutating actions use the same DSH approval and OpenKapsel Plan attribution as the existing write tools. The bundled skill's `references/mappings.md` details the REST responses and failure states.
 
 `kapsel_http.json` is always a JSON object. Endpoint fields belong inside it,
 not beside it. Context-management endpoints are handled specially because

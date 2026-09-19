@@ -56,6 +56,12 @@ export const REMOTE_TOOL_NAMES = Object.freeze([
   'kapsel_fs_stat',
   'kapsel_fs_write',
   'kapsel_fs_replace',
+  'kapsel_mappings',
+  'kapsel_fs_copy',
+  'kapsel_fs_move',
+  'kapsel_transfer',
+  'kapsel_recycle',
+  'kapsel_client_task',
   'kapsel_shell_exec',
   'kapsel_task_output',
 ]);
@@ -501,7 +507,7 @@ export function apply(ctx, config = {}) {
     defineTool({
       name: 'kapsel_http',
       description:
-        'Send a generic request to the selected OpenKapsel workspace through the openkapsel_http helper and return the parsed (or raw) response. Use it for every surface beyond the typed tools — Context except Plan updates, Memory, sharing, preview, schedules — by following the `openkapsel-rest` skill (load it with the `skill` tool). Use kapsel_plan_update for Plan updates and completion.',
+        'Send a generic request to the selected OpenKapsel workspace through the openkapsel_http helper and return the parsed (or raw) response. Use it for surfaces beyond the typed tools — Context except Plan updates, Memory, sharing, preview, schedules, and advanced mapping operations — by following the `openkapsel-rest` skill (load it with the `skill` tool). Use kapsel_plan_update for Plan updates and completion.',
       parameters: {
         method: { type: 'string', required: true, enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'], description: 'HTTP method.' },
         endpoint: { type: 'string', required: true, description: 'Workspace-relative path (e.g. "fs/list", "context") or a control-authenticated /transfer/ URL.' },
@@ -551,6 +557,184 @@ export function apply(ctx, config = {}) {
           signal: exec.signal,
         });
         return { body };
+      },
+    }),
+
+    defineTool({
+      name: 'kapsel_mappings',
+      description: 'List client-backed workspace directories, online state, write access, and client execution capabilities (GET /mappings). Check this before using a mapped path or starting a client task.',
+      parameters: {},
+      output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
+      async execute(_args, exec) {
+        return http('GET', 'mappings', { exec, signal: exec.signal });
+      },
+    }),
+
+    defineTool({
+      name: 'kapsel_fs_copy',
+      description: 'Start an asynchronous, verified copy between workspace and client mappings or between two mappings (POST /fs/copy). Never overwrites; poll kapsel_transfer with the returned id.',
+      parameters: {
+        source: { type: 'string', required: true, description: 'Workspace-relative source path.' },
+        destination: { type: 'string', required: true, description: 'Workspace-relative destination path; its parent must exist.' },
+        plan_id: { type: 'number' },
+        taskname: { type: 'string', description: TASKNAME_DESCRIPTION },
+        message: { type: 'string', description: MESSAGE_DESCRIPTION },
+        ...REMOTE_WRITE_ESCALATION_PARAMETERS,
+      },
+      output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
+      async execute(args, exec) {
+        await authorizeRemoteMutation(args, exec, 'kapsel_fs_copy', 'remote file copy');
+        const context = await mutationContext(args, exec);
+        return http('POST', 'fs/copy', {
+          json: { source: args.source, destination: args.destination },
+          planId: context.planId, taskname: context.taskname, message: context.message,
+          exec, signal: exec.signal,
+        });
+      },
+    }),
+
+    defineTool({
+      name: 'kapsel_fs_move',
+      description: 'Move a workspace path (POST /fs/move). Cross-root moves return an asynchronous transfer id; poll kapsel_transfer until complete. Existing destinations are never replaced.',
+      parameters: {
+        source: { type: 'string', required: true, description: 'Workspace-relative source path.' },
+        destination: { type: 'string', required: true, description: 'Workspace-relative destination path.' },
+        plan_id: { type: 'number' },
+        taskname: { type: 'string', description: TASKNAME_DESCRIPTION },
+        message: { type: 'string', description: MESSAGE_DESCRIPTION },
+        ...REMOTE_WRITE_ESCALATION_PARAMETERS,
+      },
+      output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
+      async execute(args, exec) {
+        await authorizeRemoteMutation(args, exec, 'kapsel_fs_move', 'remote file move');
+        const context = await mutationContext(args, exec);
+        return http('POST', 'fs/move', {
+          json: { source: args.source, destination: args.destination },
+          planId: context.planId, taskname: context.taskname, message: context.message,
+          exec, signal: exec.signal,
+        });
+      },
+    }),
+
+    defineTool({
+      name: 'kapsel_transfer',
+      description: 'Inspect, cancel, or resume a cross-root file transfer. Use the transfer id returned by kapsel_fs_copy or an asynchronous kapsel_fs_move.',
+      parameters: {
+        transfer_id: { type: 'string', required: true, description: 'Transfer id returned by a copy or cross-root move.' },
+        action: { type: 'string', required: true, enum: ['status', 'cancel', 'resume'] },
+        plan_id: { type: 'number' },
+        taskname: { type: 'string', description: TASKNAME_DESCRIPTION },
+        message: { type: 'string', description: MESSAGE_DESCRIPTION },
+        ...REMOTE_WRITE_ESCALATION_PARAMETERS,
+      },
+      output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
+      async execute(args, exec) {
+        const endpoint = `fs/transfers/${encodeURIComponent(args.transfer_id)}`;
+        if (args.action === 'status') {
+          validateEscalationArgs(args.sandbox_permissions, args.justification);
+          if (args.sandbox_permissions !== undefined) throw new Error('status is read-only; omit sandbox_permissions');
+          return http('GET', endpoint, { exec, signal: exec.signal });
+        }
+        await authorizeRemoteMutation(args, exec, 'kapsel_transfer', `remote transfer ${args.action}`);
+        const context = await mutationContext(args, exec);
+        return http('POST', `${endpoint}/${args.action}`, {
+          json: {}, planId: context.planId, taskname: context.taskname, message: context.message,
+          exec, signal: exec.signal,
+        });
+      },
+    }),
+
+    defineTool({
+      name: 'kapsel_recycle',
+      description: 'List, restore, or permanently purge one recycle entry from the ordinary workspace (root ".") or a named client mapping. Purge requires confirm=true.',
+      parameters: {
+        action: { type: 'string', required: true, enum: ['list', 'restore', 'purge'] },
+        root: { type: 'string', description: '"." for the ordinary workspace, or a mapping directory name.' },
+        recycle_id: { type: 'string', description: 'Required for restore or purge.' },
+        confirm: { type: 'boolean', description: 'Must be true for permanent purge.' },
+        offset: { type: 'integer', description: 'List pagination offset.' },
+        limit: { type: 'integer', description: 'List page size.' },
+        plan_id: { type: 'number' },
+        taskname: { type: 'string', description: TASKNAME_DESCRIPTION },
+        message: { type: 'string', description: MESSAGE_DESCRIPTION },
+        ...REMOTE_WRITE_ESCALATION_PARAMETERS,
+      },
+      output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
+      async execute(args, exec) {
+        const root = args.root ?? '.';
+        if (args.action === 'list') {
+          validateEscalationArgs(args.sandbox_permissions, args.justification);
+          if (args.sandbox_permissions !== undefined) throw new Error('listing is read-only; omit sandbox_permissions');
+          return http('GET', 'recycle/list', {
+            query: { root, offset: args.offset, limit: args.limit }, exec, signal: exec.signal,
+          });
+        }
+        if (!args.recycle_id) throw new Error('recycle_id is required for restore or purge');
+        if (args.action === 'purge' && args.confirm !== true) throw new Error('permanent purge requires confirm=true');
+        await authorizeRemoteMutation(args, exec, 'kapsel_recycle', `remote recycle ${args.action}`);
+        const context = await mutationContext(args, exec);
+        return http('POST', `recycle/${args.action}`, {
+          json: { root, recycle_id: args.recycle_id, ...(args.action === 'purge' ? { confirm: true } : {}) },
+          planId: context.planId, taskname: context.taskname, message: context.message,
+          exec, signal: exec.signal,
+        });
+      },
+    }),
+
+    defineTool({
+      name: 'kapsel_client_task',
+      description: 'List, start, inspect, send stdin to, interrupt, or kill a task running on a connected client mapping. Check kapsel_mappings for the client platform and sandbox policy first.',
+      parameters: {
+        mapping_id: { type: 'string', required: true, description: 'ID from kapsel_mappings.' },
+        action: { type: 'string', required: true, enum: ['list', 'start', 'status', 'stdin', 'interrupt', 'kill'] },
+        task_id: { type: 'string', description: 'Required for status, stdin, interrupt, or kill.' },
+        argv: { type: 'array', items: { type: 'string' }, description: 'Argument array required for start; not a Shell command string.' },
+        cwd: { type: 'string', description: 'Client export-relative working directory, default ".".' },
+        timeout_seconds: { type: 'number', description: 'Client task deadline; cannot exceed local policy.' },
+        offset: { type: 'integer', description: 'Output byte offset for status; advance using next_offset.' },
+        stdin_text: { type: 'string', description: 'UTF-8 stdin text, encoded as base64 by the plugin.' },
+        stdin_base64: { type: 'string', description: 'Pre-encoded stdin bytes; exclusive with stdin_text.' },
+        eof: { type: 'boolean', description: 'Close task stdin.' },
+        plan_id: { type: 'number' },
+        taskname: { type: 'string', description: TASKNAME_DESCRIPTION },
+        message: { type: 'string', description: MESSAGE_DESCRIPTION },
+        ...REMOTE_WRITE_ESCALATION_PARAMETERS,
+      },
+      output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
+      async execute(args, exec) {
+        const base = `mappings/${encodeURIComponent(args.mapping_id)}/tasks`;
+        if (args.action === 'list' || args.action === 'status') {
+          validateEscalationArgs(args.sandbox_permissions, args.justification);
+          if (args.sandbox_permissions !== undefined) throw new Error('task inspection is read-only; omit sandbox_permissions');
+          if (args.action === 'list') return http('GET', base, { exec, signal: exec.signal });
+          if (!args.task_id) throw new Error('task_id is required for status');
+          return http('GET', `${base}/${encodeURIComponent(args.task_id)}`, {
+            query: { offset: args.offset ?? 0 }, exec, signal: exec.signal,
+          });
+        }
+        let json;
+        let endpoint = base;
+        if (args.action === 'start') {
+          if (!Array.isArray(args.argv) || args.argv.length === 0) throw new Error('start requires a non-empty argv array');
+          json = { argv: args.argv, cwd: args.cwd ?? '.' };
+          if (args.timeout_seconds !== undefined) json.timeout_seconds = args.timeout_seconds;
+        } else {
+          if (!args.task_id) throw new Error(`task_id is required for ${args.action}`);
+          endpoint += `/${encodeURIComponent(args.task_id)}/${args.action}`;
+          json = {};
+          if (args.action === 'stdin') {
+            if (args.stdin_text !== undefined && args.stdin_base64 !== undefined) throw new Error('choose stdin_text or stdin_base64');
+            if (args.eof === true && (args.stdin_text !== undefined || args.stdin_base64 !== undefined)) throw new Error('eof cannot include stdin data');
+            json.data = args.stdin_base64 ?? Buffer.from(args.stdin_text ?? '', 'utf8').toString('base64');
+            if (args.eof === true) json.eof = true;
+          }
+        }
+        await authorizeRemoteMutation(args, exec, 'kapsel_client_task', `remote client task ${args.action}`);
+        const context = await mutationContext(args, exec);
+        return http('POST', endpoint, {
+          json, planId: context.planId, taskname: context.taskname, message: context.message,
+          exec, signal: exec.signal,
+        });
       },
     }),
 

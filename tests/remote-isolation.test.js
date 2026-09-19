@@ -73,6 +73,10 @@ test('two agents mutate only their own remote workspace and never the local cwd'
   const requestLog = [];
   const contextPatchBodies = [];
   const writeBodies = [];
+  const mappingBodies = [];
+  const mappingId = 'abcdefghijklmnopqrstuvwx';
+  const transferId = 'zyxwvutsrqponmlkjihgfedcb';
+  const clientTaskId = 'client-task-1234';
   let contextEntries = [];
 
   const server = createServer(async (request, response) => {
@@ -105,6 +109,40 @@ test('two agents mutate only their own remote workspace and never the local cwd'
         type: 'directory',
         size: 4096,
       });
+    }
+    if (request.method === 'GET' && endpoint === 'mappings') {
+      return json(response, 200, { mappings: [{ id: mappingId, name: 'laptop', online: true, writable: true }] });
+    }
+    if (request.method === 'POST' && (endpoint === 'fs/copy' || endpoint === 'fs/move')) {
+      mappingBodies.push({ endpoint, body: JSON.parse((await requestBody(request)).toString('utf8')) });
+      return json(response, 202, { id: transferId, state: 'running' });
+    }
+    if (endpoint === `fs/transfers/${transferId}` && request.method === 'GET') {
+      return json(response, 200, { id: transferId, state: 'running' });
+    }
+    if (endpoint.startsWith(`fs/transfers/${transferId}/`) && request.method === 'POST') {
+      mappingBodies.push({ endpoint, body: JSON.parse((await requestBody(request)).toString('utf8')) });
+      return json(response, 200, { id: transferId, state: 'cancelled' });
+    }
+    if (endpoint === 'recycle/list' && request.method === 'GET') {
+      return json(response, 200, { root: 'laptop', entries: [{ recycle_id: 'recycle-1' }] });
+    }
+    if ((endpoint === 'recycle/restore' || endpoint === 'recycle/purge') && request.method === 'POST') {
+      mappingBodies.push({ endpoint, body: JSON.parse((await requestBody(request)).toString('utf8')) });
+      return json(response, 200, { restored: endpoint === 'recycle/restore' });
+    }
+    const taskBase = `mappings/${mappingId}/tasks`;
+    if (endpoint === taskBase && request.method === 'GET') return json(response, 200, { tasks: [] });
+    if (endpoint === taskBase && request.method === 'POST') {
+      mappingBodies.push({ endpoint, body: JSON.parse((await requestBody(request)).toString('utf8')) });
+      return json(response, 202, { task_id: clientTaskId });
+    }
+    if (endpoint === `${taskBase}/${clientTaskId}` && request.method === 'GET') {
+      return json(response, 200, { task_id: clientTaskId, output: Buffer.from('lo').toString('base64'), next_offset: 5 });
+    }
+    if (endpoint.startsWith(`${taskBase}/${clientTaskId}/`) && request.method === 'POST') {
+      mappingBodies.push({ endpoint, body: JSON.parse((await requestBody(request)).toString('utf8')) });
+      return json(response, 200, { task_id: clientTaskId, state: 'running' });
     }
     if (request.method === 'GET' && endpoint === 'context') {
       return json(response, 200, { entries: contextEntries });
@@ -269,7 +307,94 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     assert.match(statRendered[0].text, /"type": "directory"/);
     assert.match(statRendered[0].text, /"size": 4096/);
 
+    const mappings = await registered.get('kapsel_mappings').execute({}, { agent: agentA, signal });
+    assert.equal(mappings.mappings[0].name, 'laptop');
+    const operation = { plan_id: 1, taskname: 'mapping-test', message: 'exercise mapping operation' };
+    const copy = await registered.get('kapsel_fs_copy').execute({
+      source: 'document.txt', destination: 'laptop/document.txt', ...operation,
+    }, { agent: agentA, signal });
+    assert.equal(copy.id, transferId);
+    assert.deepEqual(mappingBodies.at(-1), {
+      endpoint: 'fs/copy',
+      body: { source: 'document.txt', destination: 'laptop/document.txt',
+        plan_id: 1, taskname: 'mapping-test', message: 'exercise mapping operation' },
+    });
+    await registered.get('kapsel_fs_move').execute({
+      source: 'laptop/document.txt', destination: 'document.txt', ...operation,
+    }, { agent: agentA, signal });
+    assert.equal(mappingBodies.at(-1).endpoint, 'fs/move');
+    assert.equal((await registered.get('kapsel_transfer').execute({
+      transfer_id: transferId, action: 'status',
+    }, { agent: agentA, signal })).state, 'running');
+    await registered.get('kapsel_transfer').execute({
+      transfer_id: transferId, action: 'cancel', ...operation,
+    }, { agent: agentA, signal });
+    assert.equal(mappingBodies.at(-1).endpoint, `fs/transfers/${transferId}/cancel`);
+    await registered.get('kapsel_transfer').execute({
+      transfer_id: transferId, action: 'resume', ...operation,
+    }, { agent: agentA, signal });
+    assert.equal(mappingBodies.at(-1).endpoint, `fs/transfers/${transferId}/resume`);
+
+    assert.equal((await registered.get('kapsel_recycle').execute({
+      action: 'list', root: 'laptop',
+    }, { agent: agentA, signal })).entries[0].recycle_id, 'recycle-1');
+    await registered.get('kapsel_recycle').execute({
+      action: 'restore', root: 'laptop', recycle_id: 'recycle-1', ...operation,
+    }, { agent: agentA, signal });
+    assert.equal(mappingBodies.at(-1).body.root, 'laptop');
+    const requestsBeforeUnconfirmedPurge = requestLog.length;
+    await assert.rejects(registered.get('kapsel_recycle').execute({
+      action: 'purge', root: 'laptop', recycle_id: 'recycle-1', ...operation,
+    }, { agent: agentA, signal }), /confirm=true/);
+    assert.equal(requestLog.length, requestsBeforeUnconfirmedPurge);
+    await registered.get('kapsel_recycle').execute({
+      action: 'purge', root: 'laptop', recycle_id: 'recycle-1', confirm: true, ...operation,
+    }, { agent: agentA, signal });
+    assert.equal(mappingBodies.at(-1).body.confirm, true);
+
+    assert.deepEqual((await registered.get('kapsel_client_task').execute({
+      mapping_id: mappingId, action: 'list',
+    }, { agent: agentA, signal })).tasks, []);
+    const started = await registered.get('kapsel_client_task').execute({
+      mapping_id: mappingId, action: 'start', argv: ['python3', '-V'], cwd: '.', ...operation,
+    }, { agent: agentA, signal });
+    assert.equal(started.task_id, clientTaskId);
+    assert.deepEqual(mappingBodies.at(-1).body.argv, ['python3', '-V']);
+    const clientOutput = await registered.get('kapsel_client_task').execute({
+      mapping_id: mappingId, action: 'status', task_id: clientTaskId, offset: 3,
+    }, { agent: agentA, signal });
+    assert.equal(clientOutput.next_offset, 5);
+    assert.equal(Buffer.from(clientOutput.output, 'base64').toString('utf8'), 'lo');
+    await registered.get('kapsel_client_task').execute({
+      mapping_id: mappingId, action: 'stdin', task_id: clientTaskId, stdin_text: 'héllo', ...operation,
+    }, { agent: agentA, signal });
+    assert.equal(mappingBodies.at(-1).body.data, Buffer.from('héllo').toString('base64'));
+    await registered.get('kapsel_client_task').execute({
+      mapping_id: mappingId, action: 'stdin', task_id: clientTaskId, eof: true, ...operation,
+    }, { agent: agentA, signal });
+    assert.equal(mappingBodies.at(-1).body.eof, true);
+    for (const action of ['interrupt', 'kill']) {
+      await registered.get('kapsel_client_task').execute({
+        mapping_id: mappingId, action, task_id: clientTaskId, ...operation,
+      }, { agent: agentA, signal });
+      assert.equal(mappingBodies.at(-1).endpoint, `mappings/${mappingId}/tasks/${clientTaskId}/${action}`);
+    }
+
     sandboxModes.set('session-a', 'read-only');
+    const requestsBeforeDeniedMapping = requestLog.length;
+    for (const [toolName, args] of [
+      ['kapsel_fs_copy', { source: 'a', destination: 'laptop/a', ...operation }],
+      ['kapsel_transfer', { transfer_id: transferId, action: 'cancel', ...operation }],
+      ['kapsel_recycle', { action: 'purge', recycle_id: 'recycle-1', confirm: true, ...operation }],
+      ['kapsel_client_task', { mapping_id: mappingId, action: 'start', argv: ['python3'], ...operation }],
+    ]) {
+      await assert.rejects(registered.get(toolName).execute(args, { agent: agentA, signal }), /read-only mode/);
+    }
+    assert.equal(requestLog.length, requestsBeforeDeniedMapping);
+    assert.equal((await registered.get('kapsel_mappings').execute({}, { agent: agentA, signal })).mappings.length, 1);
+    assert.equal((await registered.get('kapsel_transfer').execute({
+      transfer_id: transferId, action: 'status',
+    }, { agent: agentA, signal })).state, 'running');
     const contextPostsBeforeReadOnlyConfig = requestLog.filter(
       (entry) => entry.method === 'POST' && entry.endpoint === 'context',
     ).length;
