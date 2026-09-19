@@ -24,7 +24,7 @@ directory; the executor also controls any platform temporary-directory access.
 
 | Area | Requirements and scope |
 |---|---|
-| DSH | Tested with DSH `0.1.2-rc.1`, the `web` profile, and the bundled **OpenKapsel Remote** preset. Other profiles are not verified. |
+| DSH | Tested with DSH `0.1.2-rc.1`, the `web` profile, and the bundled **OpenKapsel Remote** preset. The preset's persona field was updated for DSH `0.1.5-rc.2`; an existing session's command picker was confirmed working after the update. Other profiles are not verified. |
 | Node.js | Package declares `>=18`; the test matrix covers Node.js 22 and 24. Use a version supported by your DSH installation; Node.js 18 is not covered by this project's CI. |
 | Python | Python 3.10+ on the Host's `PATH`: `python` on Windows, `python3` on macOS/Linux. The test matrix covers 3.10 and 3.14. |
 | Host platform | macOS/Linux use DSH's Bash executor; Windows uses DSH's PowerShell executor without Bash. GitHub installation and Host startup verified on macOS. Windows installation and actual plugin use confirmed by user testing (2026-09-09). Linux/Windows automated tests are configured in CI. |
@@ -92,6 +92,13 @@ The installer command without `--force` remains available for manual setup.
 Removing the package does not delete the copied preset or session credentials.
 After uninstalling, remove `$DSH_HOME/.agent-presets/kapsel` if no other profile
 uses it. The preset root is shared by profiles using the same `DSH_HOME`.
+
+Version 0.7.1 changes the bundled preset's persona field from `text` to
+`prefix`, as required by DSH `0.1.5-rc.2`. The old field can prevent existing
+OpenKapsel sessions from mounting after a DSH upgrade. Restart DSH after
+updating the plugin so the bootstrap can refresh an untouched installed preset;
+if you customized that preset, use the `--force` installer command above only
+when you intend to replace your changes.
 
 Version 0.7.0's packed bundle was installed into a fresh temporary DSH profile
 on macOS: profile composition, Web Host startup, and automatic preset creation
