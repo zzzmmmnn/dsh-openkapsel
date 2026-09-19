@@ -51,6 +51,10 @@ export const REMOTE_TOOL_NAMES = Object.freeze([
   'kapsel_status',
   'kapsel_plan_update',
   'kapsel_http',
+  'kapsel_git',
+  'kapsel_fs_read_many',
+  'kapsel_fs_manifest',
+  'kapsel_fs_search',
   'kapsel_fs_list',
   'kapsel_fs_read',
   'kapsel_fs_stat',
@@ -240,7 +244,7 @@ export function apply(ctx, config = {}) {
     const argv = [method, endpoint, '--env-file', state.envFile];
     for (const [k, v] of Object.entries(query ?? {})) {
       if (v === undefined || v === null || v === '') continue;
-      argv.push('--query', `${k}=${String(v)}`);
+      for (const item of (Array.isArray(v) ? v : [v])) argv.push('--query', `${k}=${String(item)}`);
     }
     if (json !== undefined && json !== null) argv.push('--json', JSON.stringify(json));
     if (planId !== undefined && planId !== null) {
@@ -524,7 +528,9 @@ export function apply(ctx, config = {}) {
       },
       output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
       async execute(args, exec) {
-        const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(String(args.method).toUpperCase());
+        const method = String(args.method).toUpperCase();
+        const readPost = method === 'POST' && /^\/?fs\/(read_many|manifest)(?:\?|$)/.test(args.endpoint);
+        const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !readPost;
         let ctxFields = null;
         let requestJson = args.json;
         if (isMutation) {
@@ -737,6 +743,33 @@ export function apply(ctx, config = {}) {
         });
       },
     }),
+
+    ...[
+      ['kapsel_git', 'Read-only Git inspection; action is status/diff/diff_stat/log/show/ls_files. No Shell permission. Bounded sanitized snapshot; see shell reference for limits.', {
+        action: { type: 'string', enum: ['status', 'diff', 'diff_stat', 'log', 'show', 'ls_files'], required: true },
+        path: { type: 'string' }, revision: { type: 'string' }, to_revision: { type: 'string' }, staged: { type: 'boolean' },
+        file: { type: 'array', items: { type: 'string' } }, limit: { type: 'integer' }, skip: { type: 'integer' }, timeout_seconds: { type: 'integer' },
+      }, 'GET'],
+      ['kapsel_fs_read_many', 'Read multiple UTF-8 files without mutation authorization or Plan creation.', {
+        paths: { type: 'array', items: { type: 'string' }, required: true }, limit: { type: 'integer' }, max_total_chars: { type: 'integer' },
+      }, 'POST', 'fs/read_many'],
+      ['kapsel_fs_manifest', 'Read batch metadata or recursive manifest; optional SHA256. Read-only.', {
+        items: { type: 'array', items: { type: 'object', properties: { path: { type: 'string', required: true }, size: { type: 'integer' }, sha256: { type: 'string' } }, additionalProperties: false } },
+        recursive: { type: 'boolean' }, path: { type: 'string' }, depth: { type: 'integer' }, include_sha256: { type: 'boolean' },
+      }, 'POST', 'fs/manifest'],
+      ['kapsel_fs_search', 'Search UTF-8 files, with repeated include/exclude glob filters.', {
+        path: { type: 'string' }, query: { type: 'string', required: true }, regex: { type: 'boolean' }, case_sensitive: { type: 'boolean' },
+        depth: { type: 'integer' }, max_results: { type: 'integer' }, include: { type: 'array', items: { type: 'string' } }, exclude: { type: 'array', items: { type: 'string' } },
+      }, 'GET', 'fs/search'],
+    ].map(([name, description, parameters, method, endpoint]) => defineTool({
+      name, description, parameters,
+      output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
+      async execute(args, exec) {
+        const { action, ...fields } = args;
+        if (!endpoint && !['status', 'diff', 'diff_stat', 'log', 'show', 'ls_files'].includes(action)) throw new Error('Unsupported Git action');
+        return http(method, endpoint ?? `git/${action}`, { ...(method === 'GET' ? { query: fields } : { json: fields }), exec, signal: exec.signal });
+      },
+    })),
 
     defineTool({
       name: 'kapsel_fs_list',

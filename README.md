@@ -265,3 +265,19 @@ provider and run two simulated DSH agents against separate HTTP workspaces. The
 integration test verifies that each remote workspace receives only its own
 write, the local sentinel remains unchanged, and credentials exist only under
 the private state root.
+
+## Read-only RPC tools
+
+Version 0.9.0 adds `kapsel_git` (status/diff/diff_stat/log/show/ls_files),
+`kapsel_fs_read_many`, `kapsel_fs_manifest`, and `kapsel_fs_search`.
+Requires OpenKapsel 1.57.0 for this contract. Git queries are read-only and
+independent of Shell/client execution permission, including read-only mappings.
+Git uses bounded sanitized local snapshots; inspect the shell reference for
+supported repository layouts, local disk overhead, and limits. There is no Git
+task/polling API. Arbitrary Shell/client commands remain permission-gated.
+
+The generic HTTP tool recognizes exactly POST `fs/read_many` and `fs/manifest`
+as read-only: neither requires mutation approval nor creates a Plan. Other POST
+operations retain their existing guard. Query values may be arrays to send
+repeated parameters, e.g. `include: ["*.py", "*.js"]` or `file: ["a", "b"]`.
+The vendored REST skill is synchronized with the main OpenKapsel project.

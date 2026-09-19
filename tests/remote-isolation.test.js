@@ -85,6 +85,10 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     const [, workspace, endpointWithQuery] = match;
     const endpoint = endpointWithQuery.split('?', 1)[0];
     requestLog.push({ workspace, method: request.method, endpoint });
+    if (['fs/read_many', 'fs/manifest', 'fs/search'].includes(endpoint) || endpoint.startsWith('git/')) {
+      const data = request.method === 'POST' ? JSON.parse((await requestBody(request)).toString('utf8')) : null;
+      return json(response, 200, { items: [], endpoint, query: [...new URL(request.url, 'http://localhost').searchParams], body: data });
+    }
     if (request.headers.authorization !== `Bearer ${controls.get(workspace)}`) {
       return json(response, 401, { error: 'unauthorized' });
     }
@@ -381,6 +385,17 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     }
 
     sandboxModes.set('session-a', 'read-only');
+    const readStart = requestLog.length;
+    for (const [name, args] of [
+      ['kapsel_git', { action: 'status' }],
+      ['kapsel_fs_read_many', { paths: ['a', 'b'] }],
+      ['kapsel_fs_manifest', { recursive: true, path: '.' }],
+      ['kapsel_http', { method: 'POST', endpoint: 'fs/read_many', json: { paths: ['a'] } }],
+      ['kapsel_http', { method: 'POST', endpoint: 'fs/manifest', json: { items: [{ path: 'a' }] } }],
+    ]) await registered.get(name).execute(args, { agent: agentA, signal });
+    const filtered = await registered.get('kapsel_fs_search').execute({ query: 'hello', include: ['*.py', '*.js'] }, { agent: agentA, signal });
+    assert.deepEqual(filtered.query.filter(([key]) => key === 'include').map(([, value]) => value), ['*.py', '*.js']);
+    assert.equal(requestLog.slice(readStart).some(item => item.endpoint === 'context'), false);
     const requestsBeforeDeniedMapping = requestLog.length;
     for (const [toolName, args] of [
       ['kapsel_fs_copy', { source: 'a', destination: 'laptop/a', ...operation }],
