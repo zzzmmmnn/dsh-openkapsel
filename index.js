@@ -895,10 +895,11 @@ export function apply(ctx, config = {}) {
     defineTool({
       name: 'kapsel_shell_exec',
       description:
-        'Run a command in the workspace Shell (POST /shell/exec). Returns a task_id; poll its output with kapsel_task_output. Shell mode and limits are per the workspace Discovery document.',
+        'Run a Shell command via POST /shell/exec. target=auto (default) routes a mapped cwd to its client and other paths to the server; server/client may be explicit. Client execution uses its own platform and sandbox policy and never falls back to server. Returns a unified task_id for kapsel_task_output.',
       parameters: {
         command: { type: 'string', required: true, description: 'The command line to run.' },
-        cwd: { type: 'string', description: 'Working directory. Defaults to the workspace root (".").' },
+        cwd: { type: 'string', description: 'Workspace-relative working directory, e.g. laptop/project. Defaults to ".".' },
+        target: { type: 'string', enum: ['auto', 'server', 'client'], description: 'Execution location. Defaults to auto based on cwd.' },
         timeout_seconds: { type: 'number', description: 'Optional task timeout in seconds.' },
         interactive: { type: 'boolean', description: 'Keep stdin available (true) or non-interactive (default false).' },
         plan_id: { type: 'number' },
@@ -913,6 +914,7 @@ export function apply(ctx, config = {}) {
         const json = {
           command: args.command,
           ...(args.cwd !== undefined ? { cwd: args.cwd } : { cwd: '.' }),
+          target: args.target ?? 'auto',
           ...(args.timeout_seconds !== undefined ? { timeout_seconds: args.timeout_seconds } : {}),
           interactive: args.interactive === true,
         };
@@ -931,7 +933,7 @@ export function apply(ctx, config = {}) {
     defineTool({
       name: 'kapsel_task_output',
       description:
-        'Poll incremental stdout/stderr of a Shell task (GET /tasks/<id>/output). Advance cursors to the returned stdout.next_offset / stderr.next_offset between calls; use wait_seconds for long polling.',
+        'Poll incremental Shell output (GET /tasks/<id>/output). Server tasks have separate stdout/stderr; client tasks combine both in stdout and return empty stderr. Advance the returned next_offset cursors; use wait_seconds for long polling.',
       parameters: {
         task_id: { type: 'string', required: true, description: 'Task id returned by kapsel_shell_exec.' },
         stdout_offset: { type: 'integer', description: 'Byte cursor for stdout. Defaults to 0.' },

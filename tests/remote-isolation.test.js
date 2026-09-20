@@ -144,6 +144,10 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     if (endpoint === `${taskBase}/${clientTaskId}` && request.method === 'GET') {
       return json(response, 200, { task_id: clientTaskId, output: Buffer.from('lo').toString('base64'), next_offset: 5 });
     }
+    if (endpoint === 'shell/exec' && request.method === 'POST') {
+      mappingBodies.push({ endpoint, body: JSON.parse((await requestBody(request)).toString('utf8')) });
+      return json(response, 202, { task_id: 'client.' + mappingId + '.' + clientTaskId, location: 'client' });
+    }
     if (endpoint.startsWith(`${taskBase}/${clientTaskId}/`) && request.method === 'POST') {
       mappingBodies.push({ endpoint, body: JSON.parse((await requestBody(request)).toString('utf8')) });
       return json(response, 200, { task_id: clientTaskId, state: 'running' });
@@ -383,6 +387,13 @@ test('two agents mutate only their own remote workspace and never the local cwd'
       }, { agent: agentA, signal });
       assert.equal(mappingBodies.at(-1).endpoint, `mappings/${mappingId}/tasks/${clientTaskId}/${action}`);
     }
+    const unified = await registered.get('kapsel_shell_exec').execute({
+      command: 'echo mapped', cwd: 'laptop/project', target: 'client', ...operation,
+    }, { agent: agentA, signal });
+    assert.equal(unified.location, 'client');
+    assert.equal(mappingBodies.at(-1).endpoint, 'shell/exec');
+    assert.equal(mappingBodies.at(-1).body.target, 'client');
+    assert.equal(mappingBodies.at(-1).body.cwd, 'laptop/project');
 
     sandboxModes.set('session-a', 'read-only');
     const readStart = requestLog.length;

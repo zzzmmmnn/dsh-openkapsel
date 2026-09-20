@@ -183,7 +183,7 @@ publishes none. Mount it in the dedicated agent preset, not globally.
 | `kapsel_plan_update` | Update, reparent, cancel, or complete a Plan with a structured debrief |
 | `kapsel_fs_list` / `kapsel_fs_read` / `kapsel_fs_stat` | Read-side filesystem |
 | `kapsel_fs_write` / `kapsel_fs_replace` | Remote text write/edit |
-| `kapsel_shell_exec` / `kapsel_task_output` | Run and poll a remote Shell task |
+| `kapsel_shell_exec` / `kapsel_task_output` | Run a Shell task on the server or a mapped client and poll its output |
 | `kapsel_mappings` | List mapped client directories, online status, and execution policy |
 | `kapsel_fs_copy` / `kapsel_fs_move` / `kapsel_transfer` | Copy or move across workspace and client storage, then inspect/cancel/resume asynchronous transfers |
 | `kapsel_recycle` | List, restore, or explicitly purge an item in the selected storage root |
@@ -191,6 +191,16 @@ publishes none. Mount it in the dedicated agent preset, not globally.
 | `kapsel_http` | Context, Memory, sharing, preview, schedules, and other REST surfaces |
 
 For client mappings, first call `kapsel_mappings` and inspect the client's reported platform and sandbox mode. `kapsel_client_task` takes an `argv` array and a client export-relative `cwd`; it does not use the server Shell. Client task output is returned as base64 with a `next_offset` cursor. An unsandboxed client task has that client's OS-account permissions. Mutating actions use the same DSH approval and OpenKapsel Plan attribution as the existing write tools. The bundled skill's `references/mappings.md` details the REST responses and failure states.
+
+`kapsel_shell_exec` accepts `target: "auto"` (default), `"server"`, or
+`"client"`. Auto selects a connected client when `cwd` is inside its mapping
+(for example `laptop/project`), otherwise the server. A missing/denied client
+fails without server fallback. The client needs OpenKapsel 1.60.0+ and an
+enabled writable execution mapping. Its own OS, sandbox, and limits apply;
+server `/env` settings are not injected. The returned task ID works with
+`kapsel_task_output` and the standard `/tasks` controls via `kapsel_http`.
+Client stdout/stderr are combined in stdout; client stdin chunks are at most
+16 KiB. Use `kapsel_client_task` when literal client `argv` is needed.
 
 `kapsel_http.json` is always a JSON object. Endpoint fields belong inside it,
 not beside it. Context-management endpoints are handled specially because
@@ -284,7 +294,7 @@ The vendored REST skill is synchronized with the main OpenKapsel project.
 
 ## Client reconnects and portable text
 
-The bundled REST references track OpenKapsel 1.59.0. Reconnect persistence needs
+The bundled REST references track OpenKapsel 1.60.1. Reconnect persistence needs
 client 1.58.0+; explicit text codecs and literal newline handling need server
 1.59.0+ and client file API v3 for direct mapped RPC.
 
