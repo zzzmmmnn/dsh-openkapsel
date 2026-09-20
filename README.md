@@ -186,7 +186,7 @@ publishes none. Mount it in the dedicated agent preset, not globally.
 | `kapsel_shell_exec` / `kapsel_task_output` | Run a Shell task on the server or a mapped client and poll its output |
 | `kapsel_mappings` | List mapped client directories, online status, and advertised execution/RPC capabilities |
 | `kapsel_archive` | Browse ZIP/tar archives or read a bounded member without extracting; mapped archives use client RPC |
-| `kapsel_rpc` | Unified dynamic mapping RPC entry: inspect `kapsel_mappings` for family/operation descriptions and input schemas, then invoke any advertised read-only plugin |
+| `kapsel_rpc` | Unified dynamic mapping RPC entry: inspect `kapsel_mappings` for each operation's schema and `write` flag; reads run directly, writes use DSH approval + Plan/Context and require a writable mapping |
 | `kapsel_fs_copy` / `kapsel_fs_move` / `kapsel_transfer` | Copy or move across workspace and client storage, then inspect/cancel/resume asynchronous transfers |
 | `kapsel_recycle` | List, restore, or explicitly purge an item in the selected storage root |
 | `kapsel_client_task` | List, start, inspect, feed stdin to, interrupt, or kill a process on a connected client |
@@ -288,18 +288,21 @@ Git uses bounded sanitized local snapshots; inspect the shell reference for
 supported repository layouts, local disk overhead, and limits. There is no Git
 task/polling API. `kapsel_rpc` is the single dynamic mapping-RPC entry point:
 `kapsel_mappings` publishes each family description plus each operation's
-`description` and JSON `input_schema`, so adding future `doc`, `csv`, `sqlite`,
-or other read-only client plugins does not require a DSH plugin update.
-`kapsel_archive` remains a convenience tool that also works for server-local
-archives. Arbitrary Shell/client commands remain permission-gated.
+`description`, JSON `input_schema`, and boolean `write`, so adding future
+`doc`, `csv`, `sqlite`, or other client plugins does not require a DSH plugin
+update. `write=false` operations run as reads. `write=true` operations use the
+same DSH approval and OpenKapsel Plan/Context flow as other mutations and also
+require the mapping to be administratively writable. `kapsel_archive` remains
+a convenience tool that also works for server-local archives.
 
-The generic HTTP tool recognizes POST `fs/read_many`, `fs/manifest`, and the
-strict `mappings/<24-char-id>/rpc/<family>/<operation>` route as read-only:
-none requires mutation approval or creates a Plan. Archive preview uses GET
-`archive/list` and `archive/read`. Other POST operations retain their existing
-guard. Query values may be arrays to send
+The generic HTTP tool recognizes POST `fs/read_many` and `fs/manifest` as
+read-only. For `mappings/<24-char-id>/rpc/<family>/<operation>`, it consults
+the live operation `write` metadata: reads bypass mutation approval, while writes
+use approval and Plan attribution. Archive preview uses GET `archive/list` and
+`archive/read`. Other POST operations retain their existing guard. Query values
+may be arrays to send
 repeated parameters, e.g. `include: ["*.py", "*.js"]` or `file: ["a", "b"]`.
-The vendored REST skill is synchronized with the main OpenKapsel project.
+The vendored REST skill is synchronized with the main OpenKapsel project. Mapping RPC replies default to a 90-second server deadline; the bundled HTTP helper waits 120 seconds and the DSH helper process budget is 130 seconds, so the wrapper does not normally time out before the server.
 
 ## Client reconnects and portable text
 

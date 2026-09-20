@@ -118,16 +118,27 @@ test('two agents mutate only their own remote workspace and never the local cwd'
       return json(response, 200, { mappings: [{
         id: mappingId, name: 'laptop', online: true, writable: true,
         capabilities: { rpc: { vendor: {
-          state: 'available', version: 1, read_only: true,
-          description: 'Inspect vendor metadata.',
-          operations: ['inspect'],
-          operation_specs: { inspect: {
-            description: 'Inspect one integer.',
-            input_schema: {
-              type: 'object', properties: { value: { type: 'integer' } },
-              required: ['value'], additionalProperties: false,
+          state: 'available', version: 1, read_only: false,
+          description: 'Inspect or update vendor metadata.',
+          operations: ['inspect', 'update'],
+          operation_specs: {
+            inspect: {
+              description: 'Inspect one integer.',
+              input_schema: {
+                type: 'object', properties: { value: { type: 'integer' } },
+                required: ['value'], additionalProperties: false,
+              },
+              write: false,
             },
-          } },
+            update: {
+              description: 'Update one integer.',
+              input_schema: {
+                type: 'object', properties: { value: { type: 'integer' } },
+                required: ['value'], additionalProperties: false,
+              },
+              write: true,
+            },
+          },
         } } },
       }] });
     }
@@ -137,10 +148,16 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     if (request.method === 'GET' && endpoint === 'archive/read') {
       return json(response, 200, { path: 'laptop/sample.zip', location: 'client', member: 'hello.txt', content: 'hello' });
     }
-    if (request.method === 'POST' && endpoint === `mappings/${mappingId}/rpc/vendor/inspect`) {
+    if (request.method === 'POST' && (endpoint === `mappings/${mappingId}/rpc/vendor/inspect` || endpoint === `mappings/${mappingId}/rpc/vendor/update`)) {
       const body = JSON.parse((await requestBody(request)).toString('utf8'));
       mappingBodies.push({ endpoint, body });
-      return json(response, 200, { mapping_id: mappingId, family: 'vendor', operation: 'inspect', result: { ok: true, value: body.args?.value } });
+      const operation = endpoint.endsWith('/update') ? 'update' : 'inspect';
+      return json(response, 200, {
+        mapping_id: mappingId,
+        family: 'vendor',
+        operation,
+        result: operation === 'update' ? { updated: body.args?.value } : { ok: true, value: body.args?.value },
+      });
     }
     if (request.method === 'POST' && (endpoint === 'fs/copy' || endpoint === 'fs/move')) {
       mappingBodies.push({ endpoint, body: JSON.parse((await requestBody(request)).toString('utf8')) });
@@ -342,7 +359,7 @@ test('two agents mutate only their own remote workspace and never the local cwd'
 
     const mappings = await registered.get('kapsel_mappings').execute({}, { agent: agentA, signal });
     assert.equal(mappings.mappings[0].name, 'laptop');
-    assert.equal(mappings.mappings[0].capabilities.rpc.vendor.description, 'Inspect vendor metadata.');
+    assert.equal(mappings.mappings[0].capabilities.rpc.vendor.description, 'Inspect or update vendor metadata.');
     assert.equal(
       mappings.mappings[0].capabilities.rpc.vendor.operation_specs.inspect.input_schema.properties.value.type,
       'integer',
@@ -469,6 +486,20 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     ).length, contextPostsBeforeReadOnlyConfig);
 
     await assert.rejects(
+      registered.get('kapsel_rpc').execute({
+        mapping_id: mappingId,
+        family: 'vendor',
+        operation: 'update',
+        args: { value: 9 },
+        plan_id: 1,
+        taskname: 'test',
+        message: 'deny rpc write',
+      }, { agent: agentA, callId: 'denied-rpc', signal }),
+      /read-only mode.*sandbox_permissions="workspace-write"/,
+    );
+    assert.equal(mappingBodies.some((item) => item.endpoint.endsWith('/rpc/vendor/update')), false);
+
+    await assert.rejects(
       registered.get('kapsel_fs_write').execute({
         path: 'denied.txt', content: 'denied', plan_id: 1, taskname: 'test', message: 'deny write',
       }, { agent: agentA, callId: 'denied-call', signal }),
@@ -508,6 +539,23 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     assert.equal(requestLog.length, requestsBeforeEscalatedRead);
     assert.equal(approvalRequests.length, 0);
 
+    const approvedRpc = await registered.get('kapsel_rpc').execute({
+      mapping_id: mappingId,
+      family: 'vendor',
+      operation: 'update',
+      args: { value: 10 },
+      plan_id: 1,
+      taskname: 'test',
+      message: 'approved rpc write',
+      sandbox_permissions: 'workspace-write',
+      justification: 'Update the requested remote RPC value once.',
+    }, { agent: agentA, callId: 'approved-rpc', signal });
+    assert.equal(approvedRpc.result.updated, 10);
+    assert.equal(mappingBodies.at(-1).body.plan_id, 1);
+    assert.equal(mappingBodies.at(-1).body.taskname, 'test');
+    assert.equal(mappingBodies.at(-1).body.message, 'approved rpc write');
+    assert.equal(approvalRequests.at(-1).toolName, 'kapsel_rpc');
+
     await registered.get('kapsel_fs_write').execute({
       path: 'approved.txt',
       content: 'approved',
@@ -518,9 +566,10 @@ test('two agents mutate only their own remote workspace and never the local cwd'
       justification: 'Write the requested remote test file once.',
     }, { agent: agentA, callId: 'approved-call', signal });
     assert.equal(files.get('read-a').get('approved.txt'), 'approved');
-    assert.equal(approvalRequests.length, 1);
-    assert.equal(approvalRequests[0].toolName, 'kapsel_fs_write');
-    assert.match(approvalRequests[0].reason, /Write the requested remote test file once/);
+    assert.equal(approvalRequests.length, 2);
+    assert.equal(approvalRequests[0].toolName, 'kapsel_rpc');
+    assert.equal(approvalRequests[1].toolName, 'kapsel_fs_write');
+    assert.match(approvalRequests[1].reason, /Write the requested remote test file once/);
 
     sandboxModes.set('session-a', 'workspace-write');
 

@@ -256,7 +256,7 @@ export function apply(ctx, config = {}) {
       script: PY_HTTP,
       workdir: state.directory,
       sessionId: state.sessionId,
-      timeoutMs,
+      timeoutMs: timeoutMs ?? 130_000,
       stdoutMaxBytes,
       signal,
     });
@@ -286,6 +286,21 @@ export function apply(ctx, config = {}) {
     });
     state.planId = created?.id ?? null;
     return state.planId;
+  }
+
+  async function mappingRpcOperation(mappingId, family, operation, exec) {
+    const listing = await http('GET', 'mappings', { exec, signal: exec.signal });
+    const mapping = (listing?.mappings ?? []).find((item) => item?.id === mappingId);
+    if (!mapping) throw new Error('mapping RPC target is not visible in kapsel_mappings');
+    const capability = mapping.capabilities?.rpc?.[family];
+    if (!capability || capability.state !== 'available') {
+      throw new Error(`mapping RPC family is not available: ${family}`);
+    }
+    const spec = capability.operation_specs?.[operation];
+    if (!spec || typeof spec.write !== 'boolean') {
+      throw new Error(`mapping RPC operation lacks write metadata: ${family}.${operation}`);
+    }
+    return { mapping, capability, spec };
   }
 
   /** Resolve the (plan_id, taskname, message) Context every mutation requires. */
@@ -531,9 +546,18 @@ export function apply(ctx, config = {}) {
       output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
       async execute(args, exec) {
         const method = String(args.method).toUpperCase();
+        const rpcMatch = /^\/?mappings\/([A-Za-z0-9_-]{24})\/rpc\/([a-z][a-z0-9_]{0,31})\/([a-z][a-z0-9_]{0,31})(?:\?|$)/.exec(args.endpoint);
+        let rpcWrite = false;
+        if (method === 'POST' && rpcMatch) {
+          const { mapping, spec } = await mappingRpcOperation(rpcMatch[1], rpcMatch[2], rpcMatch[3], exec);
+          rpcWrite = spec.write;
+          if (rpcWrite && mapping.writable !== true) {
+            throw new Error('mapping is read-only for this RPC write operation');
+          }
+        }
         const readPost = method === 'POST' && (
           /^\/?fs\/(read_many|manifest)(?:\?|$)/.test(args.endpoint)
-          || /^\/?mappings\/[A-Za-z0-9_-]{24}\/rpc\/[a-z][a-z0-9_]{0,31}\/[a-z][a-z0-9_]{0,31}(?:\?|$)/.test(args.endpoint)
+          || (rpcMatch && !rpcWrite)
         );
         const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !readPost;
         let ctxFields = null;
@@ -611,20 +635,37 @@ export function apply(ctx, config = {}) {
 
     defineTool({
       name: 'kapsel_rpc',
-      description: 'Invoke one dynamic read-only RPC operation on a mapping. First inspect kapsel_mappings capabilities.rpc.<family>.description and operation_specs.<operation>.description/input_schema; future doc/csv/sqlite plugins require no new DSH tool. No Plan/write approval or server/FUSE fallback.',
+      description: 'Invoke one dynamic mapping RPC operation. Inspect kapsel_mappings operation_specs first: write=false is a read; write=true requires DSH write approval plus OpenKapsel Plan/Context and a writable mapping. Future plugin families require no new DSH tool. No server/FUSE fallback.',
       parameters: {
         mapping_id: { type: 'string', required: true, description: 'Mapping id from kapsel_mappings.' },
         family: { type: 'string', required: true, description: 'Advertised RPC plugin family.' },
-        operation: { type: 'string', required: true, description: 'Advertised read-only plugin operation.' },
-        args: { type: 'object', additionalProperties: true, description: 'Plugin-specific argument object.' },
+        operation: { type: 'string', required: true, description: 'Advertised RPC plugin operation.' },
+        args: { type: 'object', additionalProperties: true, description: 'Plugin-specific argument object matching the advertised input_schema.' },
+        plan_id: { type: 'number', description: 'Owning Plan id for write=true operations; omitted uses/creates the session Plan.' },
+        taskname: { type: 'string', description: TASKNAME_DESCRIPTION },
+        message: { type: 'string', description: MESSAGE_DESCRIPTION },
+        ...REMOTE_WRITE_ESCALATION_PARAMETERS,
       },
       output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
       async execute(args, exec) {
-        return http(
-          'POST',
-          `mappings/${encodeURIComponent(args.mapping_id)}/rpc/${encodeURIComponent(args.family)}/${encodeURIComponent(args.operation)}`,
-          { json: { args: args.args ?? {} }, exec, signal: exec.signal },
-        );
+        const { mapping, spec } = await mappingRpcOperation(args.mapping_id, args.family, args.operation, exec);
+        const endpoint = `mappings/${encodeURIComponent(args.mapping_id)}/rpc/${encodeURIComponent(args.family)}/${encodeURIComponent(args.operation)}`;
+        if (spec.write) {
+          if (mapping.writable !== true) throw new Error('mapping is read-only for this RPC write operation');
+          await authorizeRemoteMutation(args, exec, 'kapsel_rpc', `remote RPC ${args.family}.${args.operation}`);
+          const context = await mutationContext(args, exec);
+          return http('POST', endpoint, {
+            json: { args: args.args ?? {} },
+            ...context,
+            exec,
+            signal: exec.signal,
+          });
+        }
+        if (args.sandbox_permissions !== undefined || args.justification !== undefined
+            || args.plan_id !== undefined || args.taskname !== undefined || args.message !== undefined) {
+          throw new Error('write approval and Context fields are valid only for write=true RPC operations');
+        }
+        return http('POST', endpoint, { json: { args: args.args ?? {} }, exec, signal: exec.signal });
       },
     }),
 
