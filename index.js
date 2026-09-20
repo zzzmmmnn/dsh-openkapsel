@@ -297,8 +297,8 @@ export function apply(ctx, config = {}) {
       throw new Error(`mapping RPC family is not available: ${family}`);
     }
     const spec = capability.operation_specs?.[operation];
-    if (!spec || typeof spec.write !== 'boolean') {
-      throw new Error(`mapping RPC operation lacks write metadata: ${family}.${operation}`);
+    if (!spec || typeof spec.write !== 'boolean' || !['sync', 'task'].includes(spec.execution)) {
+      throw new Error(`mapping RPC operation lacks write/execution metadata: ${family}.${operation}`);
     }
     return { mapping, capability, spec };
   }
@@ -635,12 +635,13 @@ export function apply(ctx, config = {}) {
 
     defineTool({
       name: 'kapsel_rpc',
-      description: 'Invoke one dynamic mapping RPC operation. Inspect kapsel_mappings operation_specs first: write=false is a read; write=true requires DSH write approval plus OpenKapsel Plan/Context and a writable mapping. Future plugin families require no new DSH tool. No server/FUSE fallback.',
+      description: 'Invoke one dynamic mapping RPC operation. Inspect kapsel_mappings operation_specs first: execution=sync returns directly; execution=task returns a persistent client task_id that survives provider reconnects—poll it with kapsel_task_output and do not replay a write RPC after transport uncertainty. write=true requires DSH write approval plus OpenKapsel Plan/Context and a writable mapping. Future plugin families require no new DSH tool. No server/FUSE fallback.',
       parameters: {
         mapping_id: { type: 'string', required: true, description: 'Mapping id from kapsel_mappings.' },
         family: { type: 'string', required: true, description: 'Advertised RPC plugin family.' },
         operation: { type: 'string', required: true, description: 'Advertised RPC plugin operation.' },
         args: { type: 'object', additionalProperties: true, description: 'Plugin-specific argument object matching the advertised input_schema.' },
+        timeout_seconds: { type: 'number', description: 'Optional deadline for execution=task; cannot exceed the client max_seconds policy.' },
         plan_id: { type: 'number', description: 'Owning Plan id for write=true operations; omitted uses/creates the session Plan.' },
         taskname: { type: 'string', description: TASKNAME_DESCRIPTION },
         message: { type: 'string', description: MESSAGE_DESCRIPTION },
@@ -655,7 +656,10 @@ export function apply(ctx, config = {}) {
           await authorizeRemoteMutation(args, exec, 'kapsel_rpc', `remote RPC ${args.family}.${args.operation}`);
           const context = await mutationContext(args, exec);
           return http('POST', endpoint, {
-            json: { args: args.args ?? {} },
+            json: {
+              args: args.args ?? {},
+              ...(args.timeout_seconds !== undefined ? { timeout_seconds: args.timeout_seconds } : {}),
+            },
             ...context,
             exec,
             signal: exec.signal,
@@ -665,7 +669,14 @@ export function apply(ctx, config = {}) {
             || args.plan_id !== undefined || args.taskname !== undefined || args.message !== undefined) {
           throw new Error('write approval and Context fields are valid only for write=true RPC operations');
         }
-        return http('POST', endpoint, { json: { args: args.args ?? {} }, exec, signal: exec.signal });
+        return http('POST', endpoint, {
+          json: {
+            args: args.args ?? {},
+            ...(args.timeout_seconds !== undefined ? { timeout_seconds: args.timeout_seconds } : {}),
+          },
+          exec,
+          signal: exec.signal,
+        });
       },
     }),
 
@@ -782,7 +793,7 @@ export function apply(ctx, config = {}) {
 
     defineTool({
       name: 'kapsel_client_task',
-      description: 'List, start, inspect, send stdin to, interrupt, or kill a task running on a connected client mapping. Check kapsel_mappings for the client platform and sandbox policy first.',
+      description: 'List/start legacy Shell tasks on a client mapping, and inspect/interrupt/kill either legacy raw task ids or unified client.<mapping>.<task> ids returned by kapsel_rpc/kapsel_shell_exec. RPC tasks do not accept stdin. Check kapsel_mappings first.',
       parameters: {
         mapping_id: { type: 'string', required: true, description: 'ID from kapsel_mappings.' },
         action: { type: 'string', required: true, enum: ['list', 'start', 'status', 'stdin', 'interrupt', 'kill'] },
@@ -802,11 +813,19 @@ export function apply(ctx, config = {}) {
       output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
       async execute(args, exec) {
         const base = `mappings/${encodeURIComponent(args.mapping_id)}/tasks`;
+        const unified = typeof args.task_id === 'string' && args.task_id.startsWith('client.');
+        if (unified && !args.task_id.startsWith(`client.${args.mapping_id}.`)) {
+          throw new Error('unified client task id does not belong to mapping_id');
+        }
         if (args.action === 'list' || args.action === 'status') {
           validateEscalationArgs(args.sandbox_permissions, args.justification);
           if (args.sandbox_permissions !== undefined) throw new Error('task inspection is read-only; omit sandbox_permissions');
           if (args.action === 'list') return http('GET', base, { exec, signal: exec.signal });
           if (!args.task_id) throw new Error('task_id is required for status');
+          if (unified) {
+            if (args.offset !== undefined) throw new Error('use kapsel_task_output for offset-based unified task output');
+            return http('GET', `tasks/${encodeURIComponent(args.task_id)}`, { exec, signal: exec.signal });
+          }
           return http('GET', `${base}/${encodeURIComponent(args.task_id)}`, {
             query: { offset: args.offset ?? 0 }, exec, signal: exec.signal,
           });
@@ -819,7 +838,12 @@ export function apply(ctx, config = {}) {
           if (args.timeout_seconds !== undefined) json.timeout_seconds = args.timeout_seconds;
         } else {
           if (!args.task_id) throw new Error(`task_id is required for ${args.action}`);
-          endpoint += `/${encodeURIComponent(args.task_id)}/${args.action}`;
+          if (unified) {
+            if (args.action === 'stdin') throw new Error('RPC/unified tasks do not accept stdin through kapsel_client_task');
+            endpoint = `tasks/${encodeURIComponent(args.task_id)}/${args.action}`;
+          } else {
+            endpoint += `/${encodeURIComponent(args.task_id)}/${args.action}`;
+          }
           json = {};
           if (args.action === 'stdin') {
             if (args.stdin_text !== undefined && args.stdin_base64 !== undefined) throw new Error('choose stdin_text or stdin_base64');
