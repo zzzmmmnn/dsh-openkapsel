@@ -61,6 +61,8 @@ export const REMOTE_TOOL_NAMES = Object.freeze([
   'kapsel_fs_write',
   'kapsel_fs_replace',
   'kapsel_mappings',
+  'kapsel_archive',
+  'kapsel_rpc',
   'kapsel_fs_copy',
   'kapsel_fs_move',
   'kapsel_transfer',
@@ -529,7 +531,10 @@ export function apply(ctx, config = {}) {
       output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
       async execute(args, exec) {
         const method = String(args.method).toUpperCase();
-        const readPost = method === 'POST' && /^\/?fs\/(read_many|manifest)(?:\?|$)/.test(args.endpoint);
+        const readPost = method === 'POST' && (
+          /^\/?fs\/(read_many|manifest)(?:\?|$)/.test(args.endpoint)
+          || /^\/?mappings\/[A-Za-z0-9_-]{24}\/rpc\/[a-z][a-z0-9_]{0,31}\/[a-z][a-z0-9_]{0,31}(?:\?|$)/.test(args.endpoint)
+        );
         const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !readPost;
         let ctxFields = null;
         let requestJson = args.json;
@@ -568,11 +573,58 @@ export function apply(ctx, config = {}) {
 
     defineTool({
       name: 'kapsel_mappings',
-      description: 'List client-backed workspace directories, online state, write access, and client execution capabilities (GET /mappings). Check this before using a mapped path or starting a client task.',
+      description: 'List client-backed workspace directories and capabilities (GET /mappings). RPC families self-describe with family description plus per-operation description/input_schema; inspect this before kapsel_rpc.',
       parameters: {},
       output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
       async execute(_args, exec) {
         return http('GET', 'mappings', { exec, signal: exec.signal });
+      },
+    }),
+
+    defineTool({
+      name: 'kapsel_archive',
+      description: 'Browse or read a bounded member from a ZIP/tar archive without extracting it. Local workspace archives are read on the server; mapped archives use the client Archive RPC plugin.',
+      parameters: {
+        action: { type: 'string', required: true, enum: ['list', 'read'] },
+        path: { type: 'string', required: true, description: 'Workspace-relative archive path.' },
+        inner_path: { type: 'string', description: 'Archive-internal directory for list.' },
+        member: { type: 'string', description: 'Archive member required for read.' },
+        offset: { type: 'integer' },
+        limit: { type: 'integer' },
+        encoding: { type: 'string', description: 'Text decoding for read, default UTF-8.' },
+      },
+      output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
+      async execute(args, exec) {
+        if (args.action === 'list') {
+          return http('GET', 'archive/list', {
+            query: { path: args.path, inner_path: args.inner_path, offset: args.offset, limit: args.limit },
+            exec, signal: exec.signal,
+          });
+        }
+        if (!args.member) throw new Error('member is required for archive read');
+        return http('GET', 'archive/read', {
+          query: { path: args.path, member: args.member, offset: args.offset, limit: args.limit, encoding: args.encoding },
+          exec, signal: exec.signal,
+        });
+      },
+    }),
+
+    defineTool({
+      name: 'kapsel_rpc',
+      description: 'Invoke one dynamic read-only RPC operation on a mapping. First inspect kapsel_mappings capabilities.rpc.<family>.description and operation_specs.<operation>.description/input_schema; future doc/csv/sqlite plugins require no new DSH tool. No Plan/write approval or server/FUSE fallback.',
+      parameters: {
+        mapping_id: { type: 'string', required: true, description: 'Mapping id from kapsel_mappings.' },
+        family: { type: 'string', required: true, description: 'Advertised RPC plugin family.' },
+        operation: { type: 'string', required: true, description: 'Advertised read-only plugin operation.' },
+        args: { type: 'object', additionalProperties: true, description: 'Plugin-specific argument object.' },
+      },
+      output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
+      async execute(args, exec) {
+        return http(
+          'POST',
+          `mappings/${encodeURIComponent(args.mapping_id)}/rpc/${encodeURIComponent(args.family)}/${encodeURIComponent(args.operation)}`,
+          { json: { args: args.args ?? {} }, exec, signal: exec.signal },
+        );
       },
     }),
 
