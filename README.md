@@ -186,7 +186,7 @@ publishes none. Mount it in the dedicated agent preset, not globally.
 | `kapsel_shell_exec` / `kapsel_task_output` | Run a Shell task on the server or a mapped client and poll its output |
 | `kapsel_mappings` | List mapped client directories, online status, and advertised execution/RPC capabilities |
 | `kapsel_archive` | Browse ZIP/tar archives or read a bounded member without extracting; mapped archives use client RPC |
-| `kapsel_mapping_rpc` | Invoke an advertised third-party read-only client RPC family/operation with no FUSE/server fallback |
+| `kapsel_rpc` | Unified dynamic mapping RPC entry: inspect `kapsel_mappings` for family/operation descriptions and input schemas, then invoke any advertised read-only plugin |
 | `kapsel_fs_copy` / `kapsel_fs_move` / `kapsel_transfer` | Copy or move across workspace and client storage, then inspect/cancel/resume asynchronous transfers |
 | `kapsel_recycle` | List, restore, or explicitly purge an item in the selected storage root |
 | `kapsel_client_task` | List, start, inspect, feed stdin to, interrupt, or kill a process on a connected client |
@@ -286,10 +286,12 @@ Requires OpenKapsel 1.57.0 for this contract. Git queries are read-only and
 independent of Shell/client execution permission, including read-only mappings.
 Git uses bounded sanitized local snapshots; inspect the shell reference for
 supported repository layouts, local disk overhead, and limits. There is no Git
-task/polling API. Current builds also expose `kapsel_archive` and
-`kapsel_mapping_rpc` for OpenKapsel's built-in Archive plugin and explicitly
-advertised third-party read-only RPC families. Arbitrary Shell/client commands
-remain permission-gated.
+task/polling API. `kapsel_rpc` is the single dynamic mapping-RPC entry point:
+`kapsel_mappings` publishes each family description plus each operation's
+`description` and JSON `input_schema`, so adding future `doc`, `csv`, `sqlite`,
+or other read-only client plugins does not require a DSH plugin update.
+`kapsel_archive` remains a convenience tool that also works for server-local
+archives. Arbitrary Shell/client commands remain permission-gated.
 
 The generic HTTP tool recognizes POST `fs/read_many`, `fs/manifest`, and the
 strict `mappings/<24-char-id>/rpc/<family>/<operation>` route as read-only:

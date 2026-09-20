@@ -62,7 +62,7 @@ export const REMOTE_TOOL_NAMES = Object.freeze([
   'kapsel_fs_replace',
   'kapsel_mappings',
   'kapsel_archive',
-  'kapsel_mapping_rpc',
+  'kapsel_rpc',
   'kapsel_fs_copy',
   'kapsel_fs_move',
   'kapsel_transfer',
@@ -573,7 +573,7 @@ export function apply(ctx, config = {}) {
 
     defineTool({
       name: 'kapsel_mappings',
-      description: 'List client-backed workspace directories, online state, write access, and client execution capabilities (GET /mappings). Check this before using a mapped path or starting a client task.',
+      description: 'List client-backed workspace directories and capabilities (GET /mappings). RPC families self-describe with family description plus per-operation description/input_schema; inspect this before kapsel_rpc.',
       parameters: {},
       output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
       async execute(_args, exec) {
@@ -610,8 +610,8 @@ export function apply(ctx, config = {}) {
     }),
 
     defineTool({
-      name: 'kapsel_mapping_rpc',
-      description: 'Invoke one advertised read-only RPC plugin operation on a mapped client. No Plan or write approval; no server/FUSE fallback.',
+      name: 'kapsel_rpc',
+      description: 'Invoke one dynamic read-only RPC operation on a mapping. First inspect kapsel_mappings capabilities.rpc.<family>.description and operation_specs.<operation>.description/input_schema; future doc/csv/sqlite plugins require no new DSH tool. No Plan/write approval or server/FUSE fallback.',
       parameters: {
         mapping_id: { type: 'string', required: true, description: 'Mapping id from kapsel_mappings.' },
         family: { type: 'string', required: true, description: 'Advertised RPC plugin family.' },
