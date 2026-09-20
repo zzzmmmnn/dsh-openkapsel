@@ -117,6 +117,17 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     if (request.method === 'GET' && endpoint === 'mappings') {
       return json(response, 200, { mappings: [{ id: mappingId, name: 'laptop', online: true, writable: true }] });
     }
+    if (request.method === 'GET' && endpoint === 'archive/list') {
+      return json(response, 200, { path: 'laptop/sample.zip', location: 'client', entries: [{ name: 'hello.txt', type: 'file' }] });
+    }
+    if (request.method === 'GET' && endpoint === 'archive/read') {
+      return json(response, 200, { path: 'laptop/sample.zip', location: 'client', member: 'hello.txt', content: 'hello' });
+    }
+    if (request.method === 'POST' && endpoint === `mappings/${mappingId}/rpc/vendor/inspect`) {
+      const body = JSON.parse((await requestBody(request)).toString('utf8'));
+      mappingBodies.push({ endpoint, body });
+      return json(response, 200, { mapping_id: mappingId, family: 'vendor', operation: 'inspect', result: { ok: true, value: body.args?.value } });
+    }
     if (request.method === 'POST' && (endpoint === 'fs/copy' || endpoint === 'fs/move')) {
       mappingBodies.push({ endpoint, body: JSON.parse((await requestBody(request)).toString('utf8')) });
       return json(response, 202, { id: transferId, state: 'running' });
@@ -403,6 +414,10 @@ test('two agents mutate only their own remote workspace and never the local cwd'
       ['kapsel_fs_manifest', { recursive: true, path: '.' }],
       ['kapsel_http', { method: 'POST', endpoint: 'fs/read_many', json: { paths: ['a'] } }],
       ['kapsel_http', { method: 'POST', endpoint: 'fs/manifest', json: { items: [{ path: 'a' }] } }],
+      ['kapsel_archive', { action: 'list', path: 'laptop/sample.zip' }],
+      ['kapsel_archive', { action: 'read', path: 'laptop/sample.zip', member: 'hello.txt' }],
+      ['kapsel_mapping_rpc', { mapping_id: mappingId, family: 'vendor', operation: 'inspect', args: { value: 7 } }],
+      ['kapsel_http', { method: 'POST', endpoint: `mappings/${mappingId}/rpc/vendor/inspect`, json: { args: { value: 8 } } }],
     ]) await registered.get(name).execute(args, { agent: agentA, signal });
     const filtered = await registered.get('kapsel_fs_search').execute({ query: 'hello', include: ['*.py', '*.js'] }, { agent: agentA, signal });
     assert.deepEqual(filtered.query.filter(([key]) => key === 'include').map(([, value]) => value), ['*.py', '*.js']);
