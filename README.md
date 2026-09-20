@@ -186,10 +186,10 @@ publishes none. Mount it in the dedicated agent preset, not globally.
 | `kapsel_shell_exec` / `kapsel_task_output` | Run a Shell task on the server or a mapped client and poll its output |
 | `kapsel_mappings` | List mapped client directories, online status, and advertised execution/RPC capabilities |
 | `kapsel_archive` | Browse ZIP/tar archives or read a bounded member without extracting; mapped archives use client RPC |
-| `kapsel_rpc` | Unified dynamic mapping RPC entry: inspect `kapsel_mappings` for each operation's schema and `write` flag; reads run directly, writes use DSH approval + Plan/Context and require a writable mapping |
+| `kapsel_rpc` | Unified dynamic mapping RPC entry: inspect each operation's schema, `write`, and `execution`; sync returns directly, task returns a persistent client task id; writes use DSH approval + Plan/Context and require a writable mapping |
 | `kapsel_fs_copy` / `kapsel_fs_move` / `kapsel_transfer` | Copy or move across workspace and client storage, then inspect/cancel/resume asynchronous transfers |
 | `kapsel_recycle` | List, restore, or explicitly purge an item in the selected storage root |
-| `kapsel_client_task` | List, start, inspect, feed stdin to, interrupt, or kill a process on a connected client |
+| `kapsel_client_task` | List/start legacy client Shell tasks and inspect/interrupt/kill unified client task ids returned by `kapsel_rpc`/`kapsel_shell_exec`; RPC tasks do not accept stdin |
 | `kapsel_http` | Context, Memory, sharing, preview, schedules, and other REST surfaces |
 
 For client mappings, first call `kapsel_mappings` and inspect the client's reported platform and sandbox mode. `kapsel_client_task` takes an `argv` array and a client export-relative `cwd`; it does not use the server Shell. Client task output is returned as base64 with a `next_offset` cursor. An unsandboxed client task has that client's OS-account permissions. Mutating actions use the same DSH approval and OpenKapsel Plan attribution as the existing write tools. The bundled skill's `references/mappings.md` details the REST responses and failure states.
@@ -282,18 +282,23 @@ the private state root.
 
 Version 0.9.0 adds `kapsel_git` (status/diff/diff_stat/log/show/ls_files),
 `kapsel_fs_read_many`, `kapsel_fs_manifest`, and `kapsel_fs_search`.
-Requires OpenKapsel 1.57.0 for this contract. Git queries are read-only and
-independent of Shell/client execution permission, including read-only mappings.
-Git uses bounded sanitized local snapshots; inspect the shell reference for
-supported repository layouts, local disk overhead, and limits. There is no Git
-task/polling API. `kapsel_rpc` is the single dynamic mapping-RPC entry point:
-`kapsel_mappings` publishes each family description plus each operation's
-`description`, JSON `input_schema`, and boolean `write`, so adding future
-`doc`, `csv`, `sqlite`, or other client plugins does not require a DSH plugin
-update. `write=false` operations run as reads. `write=true` operations use the
-same DSH approval and OpenKapsel Plan/Context flow as other mutations and also
-require the mapping to be administratively writable. `kapsel_archive` remains
-a convenience tool that also works for server-local archives.
+Requires OpenKapsel with RPC-plugin task support (commit `95392b5` or a later
+release) for this contract. Git read operations remain independent of
+Shell/client execution permission and use bounded sanitized snapshots. Git
+`add`, `commit`, `restore`, and `checkout` are advertised as
+`write=true, execution=task`; Archive `create` and `extract` use the same
+persistent task model. `kapsel_rpc` is the single dynamic mapping-RPC entry
+point: `kapsel_mappings` publishes each family description plus each operation's
+`description`, JSON `input_schema`, boolean `write`, and `execution`
+(`sync` or `task`). A task operation returns a unified
+`client.<mapping>.<task>` id immediately; poll it with `kapsel_task_output`
+or inspect/control it with `kapsel_client_task`. The task survives provider
+disconnect/reconnect while the client process stays alive. Never replay an
+uncertain write-task start; reconnect and query/list the returned or candidate
+task id instead. `write=true` still uses DSH approval plus OpenKapsel
+Plan/Context and requires the mapping to be administratively writable.
+`kapsel_archive` remains a read-preview convenience tool for local or mapped
+archives; Archive create/extract use `kapsel_rpc`.
 
 The generic HTTP tool recognizes POST `fs/read_many` and `fs/manifest` as
 read-only. For `mappings/<24-char-id>/rpc/<family>/<operation>`, it consults
