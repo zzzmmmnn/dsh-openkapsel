@@ -12,7 +12,7 @@ const mapping = {
 };
 const partial = { matches: [], truncated: true, unavailable_mappings: [{ mapping_id: mapping.id, code: 'mapping_offline' }] };
 
-function fixture(t, config = {}, mode = 'workspace-write') {
+function fixture(t, config = {}, mode = 'workspace-write', response) {
   const stateDir = mkdtempSync(join(tmpdir(), 'dsh-rpc-first-'));
   t.after(() => rmSync(stateDir, { recursive: true, force: true }));
   const tools = new Map(), calls = [], skills = [], prompts = [];
@@ -30,9 +30,9 @@ function fixture(t, config = {}, mode = 'workspace-write') {
           if (failure instanceof Error) throw failure;
           return { exitCode: 1, stderr: { text: failure }, stdout: { text: '' } };
         }
-        const result = call.endpoint === 'context' ? (call.method === 'GET' ? { entries: [{ id: 7, taskname: 'test' }] } : { id: 7 })
+        const result = response ?? (call.endpoint === 'context' ? (call.method === 'GET' ? { entries: [{ id: 7, taskname: 'test' }] } : { id: 7 })
           : call.endpoint === 'mappings' ? { mappings: [mapping] }
-          : call.endpoint === 'fs/search' ? partial : { task_id: 'task_test', location: 'server' };
+          : call.endpoint === 'fs/search' ? partial : { task_id: 'task_test', location: 'server' });
         return { exitCode: 0, stdout: { text: JSON.stringify(result) } };
       },
     },
@@ -141,4 +141,35 @@ test('bundled skill and prompt teach RPC-first mapping usage', t => {
   assert.doesNotMatch(text, /It may fall back to FUSE|`rpc\.file`, `rpc\.git`/);
   assert.match(f.prompts.join('\n'), /mounted=false/);
   assert.match(f.prompts.join('\n'), /mount_mappings/);
+});
+
+
+test('atomic Plan requests and all returned child IDs pass through in one call', async t => {
+  const receipt = { id: 20, request_id: 'feature-01', replayed: false, subplans: [
+    { index: 0, ref: 'code', id: 21, plan_id: 20 }, { index: 1, ref: 'tests', id: 22, plan_id: 20 },
+  ] };
+  const f = fixture(t, {}, 'workspace-write', receipt);
+  const json = { type: 'plan', taskname: 'feature', content: 'Implement', request_id: 'feature-01',
+    subplans: [{ ref: 'code', content: 'Code' }, { ref: 'tests', content: 'Verify' }] };
+  const result = await f.tools.get('kapsel_http').execute({ method: 'POST', endpoint: 'context', json }, f.exec);
+  assert.deepEqual(result.body, receipt);
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.calls[0].endpoint, 'context');
+  assert.deepEqual(f.calls[0].body, json);
+  assert.equal(f.calls[0].plan, undefined);
+  assert.match(f.skills[0].content, /Create a plan and direct subplans in one call/);
+  assert.match(f.prompts.join('\n'), /subplans.*request_id/);
+});
+
+test('atomic Plan creation retains approval policy and does not replay failed requests', async t => {
+  const args = { method: 'POST', endpoint: 'context', json: { type: 'plan', content: 'Once', taskname: 'feature',
+    request_id: 'feature-02', subplans: [{ ref: 'child', content: 'Child' }] } };
+  const denied = fixture(t, {}, 'read-only');
+  await assert.rejects(denied.tools.get('kapsel_http').execute(args, denied.exec), /read-only/);
+  assert.equal(denied.calls.length, 0);
+  const failed = fixture(t);
+  failed.fail('response lost');
+  await assert.rejects(failed.tools.get('kapsel_http').execute(args, failed.exec), /response lost/);
+  assert.equal(failed.calls.length, 1);
+  assert.equal(failed.calls[0].body.request_id, 'feature-02');
 });

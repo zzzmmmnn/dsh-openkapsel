@@ -417,3 +417,18 @@ mistaken for complete whole-file aggregates. Format availability depends on
 optional libraries installed on the mapping client. No FUSE is needed.
 
 The bundled `openkapsel-rest` skill includes `references/data-rpc.md`.
+
+## Atomic plan batches
+
+On a server advertising `capabilities.context.plan_creation.atomic_subplans`,
+use `kapsel_http` once with `method: "POST"`, `endpoint: "context"` and `json`
+containing `type: "plan"`, `taskname`, `content`, optional `request_id`, and
+`subplans: [{"ref":"code","content":"Implement"},{"ref":"tests","content":"Verify"}]`.
+The response returns the parent `id` and every child's `id`/`plan_id`/`ref`.
+Pass a returned child ID to subsequent mutation tools; no extra Plan creation is
+necessary. Do not put endpoint fields beside `json`.
+
+The server creates the complete batch atomically. Reuse the same `request_id`
+and request only to recover an uncertain response, not to start new work. The
+plugin does not automatically replay failed writes or change its approval policy.
+See the bundled Context reference for direct-child limits and idempotency rules.
