@@ -485,6 +485,26 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     assert.equal(mappingBodies.at(-1).endpoint, 'shell/exec');
     assert.equal(mappingBodies.at(-1).body.target, 'client');
     assert.equal(mappingBodies.at(-1).body.cwd, 'laptop/project');
+    assert.equal(Object.hasOwn(mappingBodies.at(-1).body, 'mount_mappings'), false);
+    const nativeDependencies = ['laptop', mappingId];
+    await registered.get('kapsel_shell_exec').execute({
+      command: 'python laptop/project/main.py', cwd: '.', target: 'server',
+      mount_mappings: nativeDependencies, ...operation,
+    }, { agent: agentA, signal });
+    assert.deepEqual(mappingBodies.at(-1).body.mount_mappings, nativeDependencies);
+    assert.equal(mappingBodies.at(-1).body.target, 'server');
+    assert.equal(mappingBodies.at(-1).body.plan_id, 1);
+    assert.equal(shellSpecs.at(-1).timeoutMs, 130_000);
+    const helperArguments = JSON.parse(shellSpecs.at(-1).stdin).args;
+    assert.equal(helperArguments[helperArguments.indexOf('--timeout') + 1], '120');
+    await registered.get('kapsel_http').execute({
+      method: 'POST', endpoint: 'shell/exec',
+      json: { command: 'python laptop/project/main.py', cwd: '.', target: 'server', mount_mappings: nativeDependencies },
+      ...operation,
+    }, { agent: agentA, signal });
+    assert.deepEqual(mappingBodies.at(-1).body.mount_mappings, nativeDependencies);
+    assert.equal(mappingBodies.at(-1).body.plan_id, 1);
+    assert.equal(shellSpecs.at(-1).timeoutMs, 130_000);
 
     sandboxModes.set('session-a', 'read-only');
     const readStart = requestLog.length;

@@ -336,3 +336,72 @@ exact codec names and BOM rules. There is no guessing or lossy conversion.
 LF, CRLF, and CR remain literal: exact replacements must match original endings,
 and new text chooses its own endings. UTF-8-only byte cursors and search retain
 their existing restrictions.
+
+## RPC-first mappings (OpenKapsel 1.61.0+)
+
+`kapsel_mappings` may report `online: true` and `mounted: false`: this is normal.
+Use file, search, copy/transfer, archive and RPC tools directly; never mount a
+mapping or run a Shell command just to make those interfaces work. Static preview
+also uses RPC. Keep the default `target: "auto"`: a mapped cwd executes on its
+client without a server mount; other working directories execute on the server.
+
+For intentional server execution, the cwd mapping is automatic. Declare other
+native filesystem dependencies with the optional `mount_mappings` array of at
+most 256 non-empty workspace mapping names or IDs:
+
+```json
+{
+  "command": "python laptop/project/main.py",
+  "cwd": ".",
+  "target": "server",
+  "mount_mappings": ["laptop"]
+}
+```
+
+Pass this to `kapsel_shell_exec`, or put it in `kapsel_http.json` for POST
+`shell/exec`. The field does not change auto placement, and non-empty dependencies
+are invalid for client execution. Both routes retain normal write approval and
+Plan/Context attribution. Do not parse commands to guess dependencies or default
+to mounting every mapping.
+
+FastAPI's extra native dependencies belong in the application's
+`api/mappings.json`, for example `{"mount_mappings":["datasets"]}`. Its containing
+mapping is automatic. Mount leases follow the task or API worker, not one HTTP
+request; ordinary file operations never use FUSE fallback. A server may disable
+native mounts while leaving file/RPC and client execution available.
+
+Current clients always enable core file RPC: **rpc.file has been removed**;
+remove that key from older client configurations. Upgrade both client and server
+for `file_stream` metadata. Treat `unavailable_mappings`, `truncated`, and
+unavailable tree/manifest nodes as incomplete results, not missing files. After
+a timeout, cancellation or lost write/start response, inspect existing tasks and
+affected paths; never automatically replay the command or RPC mutation.
+
+The bundled skill's mappings, Shell and web/application references document the
+contract. Runtime Discovery remains authoritative for server-version differences.
+
+### Shell startup request timeout
+
+The plugin setting `shellRequestTimeoutSeconds` controls the HTTP wait for the
+initial Shell-start response, including lazy native-mount setup. It defaults to
+120 seconds and accepts finite numbers from 1 to 3600. Configure it in the DSH
+composition row, not in the tool's request JSON:
+
+```yaml
+- id: tool-kapsel
+  name: 'dsh-openkapsel'
+  config:
+    taskname: dsh
+    enforceRemoteOnly: true
+    shellRequestTimeoutSeconds: 300
+```
+
+Both `kapsel_shell_exec` and generic POST `shell/exec` calls use this setting.
+The Python HTTP request uses that timeout; the host helper watchdog adds 10
+seconds (130 seconds by default). Credential discovery/renewal and harness or
+reverse-proxy limits may impose their own bounds; this is not a guarantee that
+every setup completes within the configured time. Other endpoint budgets are
+unchanged. A tool's `timeout_seconds` is the remote task execution deadline and
+is deliberately independent. A failed startup request is never automatically
+retried; its error reminds the model that timeout/cancellation does not prove the
+remote task stopped and that `/tasks` must be inspected before any retry.

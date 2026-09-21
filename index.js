@@ -129,6 +129,14 @@ function resolvedMessage(value) {
 }
 
 export function apply(ctx, config = {}) {
+  // HTTP wait for Shell startup (including lazy mounts), not the task deadline.
+  const shellRequestTimeoutSeconds = config.shellRequestTimeoutSeconds === undefined
+    ? 120 : config.shellRequestTimeoutSeconds;
+  if (typeof shellRequestTimeoutSeconds !== 'number'
+      || !Number.isFinite(shellRequestTimeoutSeconds)
+      || shellRequestTimeoutSeconds < 1 || shellRequestTimeoutSeconds > 3600) {
+    throw new Error('dsh-openkapsel: shellRequestTimeoutSeconds must be a number between 1 and 3600');
+  }
   const shell = ctx.shell; // injected
   const sandboxPolicy = ctx.sandboxPolicy; // injected
 
@@ -252,15 +260,23 @@ export function apply(ctx, config = {}) {
     if (planId !== undefined && planId !== null) {
       argv.push('--plan-id', String(planId), '--taskname', String(taskname), '--message', String(message));
     }
-    const out = await runPython(argv, {
-      script: PY_HTTP,
-      workdir: state.directory,
-      sessionId: state.sessionId,
-      timeoutMs: timeoutMs ?? 130_000,
-      stdoutMaxBytes,
-      signal,
-    });
-    return parseJson(out);
+    // Apply equally to the typed Shell tool and generic kapsel_http calls.
+    const shellStart = method === 'POST' && /^\/?shell\/exec(?:[?#]|$)/.test(endpoint);
+    if (shellStart) argv.push('--timeout', String(shellRequestTimeoutSeconds));
+    try {
+      const out = await runPython(argv, {
+        script: PY_HTTP,
+        workdir: state.directory,
+        sessionId: state.sessionId,
+        timeoutMs: shellStart ? shellRequestTimeoutSeconds * 1000 + 10_000 : (timeoutMs ?? 130_000),
+        stdoutMaxBytes,
+        signal,
+      });
+      return parseJson(out);
+    } catch (error) {
+      if (!shellStart) throw error;
+      throw new Error(`${error?.message ?? error} A timeout, cancellation, or lost response does not confirm the remote task stopped. Inspect /tasks before retrying; never automatically replay the command.`);
+    }
   }
 
   async function ensurePlan(exec, { allowCreate = true } = {}) {
@@ -1012,12 +1028,18 @@ export function apply(ctx, config = {}) {
     defineTool({
       name: 'kapsel_shell_exec',
       description:
-        'Run a Shell command via POST /shell/exec. target=auto (default) routes a mapped cwd to its client and other paths to the server; server/client may be explicit. Client execution uses its own platform and sandbox policy and never falls back to server. Returns a unified task_id for kapsel_task_output.',
+        'Run a Shell command via POST /shell/exec. target=auto (default) routes a mapped cwd to its client and other paths to the server; server/client may be explicit. Client execution uses its own platform and sandbox policy and never falls back to server. Server cwd mapping is automatic; declare extra native dependencies with mount_mappings. Returns a unified task_id for kapsel_task_output. Never automatically replay a start after transport uncertainty.',
       parameters: {
         command: { type: 'string', required: true, description: 'The command line to run.' },
         cwd: { type: 'string', description: 'Workspace-relative working directory, e.g. laptop/project. Defaults to ".".' },
         target: { type: 'string', enum: ['auto', 'server', 'client'], description: 'Execution location. Defaults to auto based on cwd.' },
-        timeout_seconds: { type: 'number', description: 'Optional task timeout in seconds.' },
+        mount_mappings: {
+          // The current DSH schema DSL omits array/string length keywords.
+          // Enforce bounds below before approval, Plan creation, or dispatch.
+          type: 'array', items: { type: 'string' },
+          description: 'Additional native dependencies for server execution: at most 256 non-empty workspace mapping names or IDs. Server cwd mapping is automatic; client execution needs no mount. Omit for ordinary RPC/file operations. Auto placement remains based on cwd.',
+        },
+        timeout_seconds: { type: 'number', description: 'Optional task execution deadline in seconds; separate from the plugin Shell startup request timeout.' },
         interactive: { type: 'boolean', description: 'Keep stdin available (true) or non-interactive (default false).' },
         plan_id: { type: 'number' },
         taskname: { type: 'string', description: TASKNAME_DESCRIPTION },
@@ -1026,12 +1048,22 @@ export function apply(ctx, config = {}) {
       },
       output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
       async execute(args, exec) {
+        if (args.mount_mappings !== undefined) {
+          if (!Array.isArray(args.mount_mappings) || args.mount_mappings.length > 256
+              || args.mount_mappings.some(name => typeof name !== 'string' || !name || name.includes('\0'))) {
+            throw new Error('mount_mappings must be an array of at most 256 non-empty mapping names or IDs without NUL');
+          }
+          if (args.target === 'client' && args.mount_mappings.length) {
+            throw new Error('mount_mappings applies only to server execution; omit it for client tasks');
+          }
+        }
         await authorizeRemoteMutation(args, exec, 'kapsel_shell_exec', 'remote shell command');
         const ctxFields = await mutationContext(args, exec);
         const json = {
           command: args.command,
           ...(args.cwd !== undefined ? { cwd: args.cwd } : { cwd: '.' }),
           target: args.target ?? 'auto',
+          ...(args.mount_mappings !== undefined ? { mount_mappings: args.mount_mappings } : {}),
           ...(args.timeout_seconds !== undefined ? { timeout_seconds: args.timeout_seconds } : {}),
           interactive: args.interactive === true,
         };
@@ -1042,7 +1074,6 @@ export function apply(ctx, config = {}) {
           message: ctxFields.message,
           exec,
           signal: exec.signal,
-          timeoutMs: 60_000,
         });
       },
     }),
@@ -1091,7 +1122,7 @@ export function apply(ctx, config = {}) {
     systemPrompt.section({
       name: 'kapsel',
       order: 195,
-      text: `OpenKapsel workspace access is available through the \`kapsel_*\` tools. When a user supplies an OpenKapsel workspace URL and control token, call \`kapsel_config\` once to initialize it, then operate the remote workspace through the typed tools or \`kapsel_http\`. Use \`kapsel_plan_update\` for Plan updates and completion; its typed debrief avoids ambiguous generic request fields. The authoritative REST contract is the vendored \`${SKILL_NAME}\` skill — load it with the \`skill\` tool before nontrivial operations. DSH \`read-only\` mode permits remote reads but denies remote writes, edits, Shell commands, and mutating HTTP methods. After such a denial, retry the exact call with \`sandbox_permissions: "workspace-write"\` and a one-sentence \`justification\` only when the mutation is necessary; approval applies to that call alone. DSH \`workspace-write\` and \`danger-full-access\` are equivalent for this bridge because the OpenKapsel token remains the remote authority boundary. Never print or commit the control token.`,
+      text: `OpenKapsel workspace access is available through the \`kapsel_*\` tools. When a user supplies an OpenKapsel workspace URL and control token, call \`kapsel_config\` once to initialize it, then operate the remote workspace through the typed tools or \`kapsel_http\`. Use \`kapsel_plan_update\` for Plan updates and completion; its typed debrief avoids ambiguous generic request fields. The authoritative REST contract is the vendored \`${SKILL_NAME}\` skill — load it with the \`skill\` tool before nontrivial operations. On RPC-first servers, online=true with mounted=false is normal: use file/RPC tools without mounting. Keep Shell target=auto unless server execution is intended; declare extra server native dependencies with mount_mappings, and FastAPI dependencies in api/mappings.json. Never automatically replay a Shell/RPC write after a timeout, cancellation, or lost response; inspect existing tasks and affected paths first. Check unavailable_mappings and truncated query results before claiming a search is complete. DSH \`read-only\` mode permits remote reads but denies remote writes, edits, Shell commands, and mutating HTTP methods. After such a denial, retry the exact call with \`sandbox_permissions: "workspace-write"\` and a one-sentence \`justification\` only when the mutation is necessary; approval applies to that call alone. DSH \`workspace-write\` and \`danger-full-access\` are equivalent for this bridge because the OpenKapsel token remains the remote authority boundary. Never print or commit the control token.`,
     });
   }
 

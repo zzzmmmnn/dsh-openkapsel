@@ -17,4 +17,5 @@
   config:
     taskname: dsh
     enforceRemoteOnly: true
+    # shellRequestTimeoutSeconds: 120  # HTTP startup wait, not task timeout; 1-3600
     # stateDir: /absolute/private/path  # default: $DSH_HOME/state/dsh-openkapsel
