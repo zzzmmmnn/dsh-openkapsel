@@ -432,3 +432,7 @@ The server creates the complete batch atomically. Reuse the same `request_id`
 and request only to recover an uncertain response, not to start new work. The
 plugin does not automatically replay failed writes or change its approval policy.
 See the bundled Context reference for direct-child limits and idempotency rules.
+
+## OAuth browser consent is separate from this REST bridge
+
+OpenKapsel OAuth-capable MCP clients use the independent browser consent page. A user verifies ownership there with the current control token for the exact linked configuration; administrator login is not required. This plugin continues using its existing REST credentials and never submits them to a browser form or client callback. OAuth access/refresh credentials remain separate from REST credentials. Updating server consent does not require a new plugin transport or new tool.
