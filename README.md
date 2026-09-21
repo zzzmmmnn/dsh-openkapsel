@@ -405,3 +405,15 @@ unchanged. A tool's `timeout_seconds` is the remote task execution deadline and
 is deliberately independent. A failed startup request is never automatically
 retried; its error reminds the model that timeout/cancellation does not prove the
 remote task stopped and that `/tasks` must be inspected before any retry.
+
+## Structured configuration and large tables
+
+Use `kapsel_mappings` to inspect the client's `structured` and `tabular` schemas,
+then call `kapsel_rpc`. Structured JSON/YAML/TOML edits use conditional atomic
+write/patch tasks; CSV/Excel operations are read-only, including asynchronous
+`tabular.scan`. CSV pages use authenticated seek cursors, not repeated row-offset
+scans. Segment scans return explicit progress/continuation and must not be
+mistaken for complete whole-file aggregates. Format availability depends on
+optional libraries installed on the mapping client. No FUSE is needed.
+
+The bundled `openkapsel-rest` skill includes `references/data-rpc.md`.
