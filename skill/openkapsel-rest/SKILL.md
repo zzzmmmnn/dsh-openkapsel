@@ -25,9 +25,9 @@ python3 <openkapsel-rest-skill-directory>/scripts/openkapsel_config.py init \
   'https://host.example/kapsel/w/<READ_TOKEN>' '<CONTROL_TOKEN>'
 ```
 
-Invoke the script by its actual installed path while keeping the process working directory at the controlling project. `init` writes `.openkapsel.env` in that current directory with mode `0600` and does not echo either credential. It is idempotent for the same pair and refuses to replace different existing credentials unless `--force` is explicit. Exclude the file from version control. The helpers search from the current directory upward through the nearest Git repository, so changing project directories selects a different OpenKapsel workspace. Never upload or copy this file into the controlled workspace; the tree uploader excludes it automatically.
+Invoke the script by its actual installed path while keeping the process working directory at the controlling project. `init` writes `.openkapsel.env` in that current directory with mode `0600` by default and does not echo either credential. Use `init --env-file <path>` or set `OPENKAPSEL_ENV_FILE` when the host AI/client has its own credential-storage convention; the parent directory must already exist. It is idempotent for the same pair and refuses to replace different existing credentials unless `--force` is explicit. Exclude the credential file from version control. The helpers search from the current directory upward through the nearest Git repository when no explicit credential file is selected, so changing project directories selects a different OpenKapsel workspace. Never upload or copy the credential file into the controlled workspace; the tree uploader excludes the default `.openkapsel.env` automatically.
 
-Explicit `--base-url`, `--control-token`, and `--env-file` options remain available. The original `OPENKAPSEL_BASE_URL` and `OPENKAPSEL_CONTROL_TOKEN` process environment variables remain fallback inputs when no directory file supplies them.
+Explicit `--base-url`, `--control-token`, and `--env-file` options remain available. `OPENKAPSEL_ENV_FILE` selects the same non-default credential file for initialization and helper use. The original `OPENKAPSEL_BASE_URL` and `OPENKAPSEL_CONTROL_TOKEN` process environment variables remain fallback inputs when no directory file supplies them.
 
 For directory-scoped credentials, the helpers cache the published expiration in the file. When less than two days remain, they call the conditional renewal endpoint, atomically replace the workspace URL and control token, and store the new three-day expiration. Renewal leaves the preview token unchanged. If credentials already expired, administrator renewal is required.
 
@@ -62,6 +62,7 @@ client setting rpc.file has been removed; see the mappings reference.
 - For temporary cross-workspace transfer by share ID, read [references/sharing.md](references/sharing.md).
 - For client-backed mapped directories, RPC plugins, archive preview, cross-root copying/moving, and tasks executed on a client machine, read [references/mappings.md](references/mappings.md).
 - For JSON/YAML/TOML reads and conditional edits, and read-only CSV/Excel pages or large-file scans, read [references/data-rpc.md](references/data-rpc.md).
+- For client-local SSH profiles, reusable SSH connections, remote command tasks, and SFTP transfer, read [references/ssh-rpc.md](references/ssh-rpc.md).
 - For a compact inventory of every non-MCP HTTP surface, read [references/endpoint-index.md](references/endpoint-index.md).
 
 ## Helpers

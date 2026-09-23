@@ -418,6 +418,26 @@ optional libraries installed on the mapping client. No FUSE is needed.
 
 The bundled `openkapsel-rest` skill includes `references/data-rpc.md`.
 
+## SSH RPC
+
+Use `kapsel_mappings` to inspect the client's `ssh` capability, then call
+`kapsel_rpc`. SSH profiles and credentials stay on the mapping client. The
+first operation may select a configured profile and returns a process-scoped
+`connection_id`; later `exec`, SFTP read/list/stat, upload, and download
+operations can reuse the same authenticated transport. Connections expire after
+60 seconds idle by default, but active commands or transfers do not count as
+idle. Expired, lost, and explicitly closed IDs fail distinctly and are never
+silently reconnected.
+
+All SSH operations advertise `write=true`, including remote reads, because
+using client-local SSH credentials is privileged external access. They therefore
+require DSH write approval, OpenKapsel Plan/Context, and an administratively
+writable mapping. Never automatically replay `ssh_execution_uncertain` after a
+transport loss. Paramiko is required only on the mapping client, not by this DSH
+plugin.
+
+The bundled `openkapsel-rest` skill includes `references/ssh-rpc.md`.
+
 ## Atomic plan batches
 
 On a server advertising `capabilities.context.plan_creation.atomic_subplans`,
