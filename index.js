@@ -319,6 +319,33 @@ export function apply(ctx, config = {}) {
     return { mapping, capability, spec };
   }
 
+  async function serverRpcOperation(family, operation, exec) {
+    const discovery = await http('GET', '/', { exec, signal: exec.signal });
+    const capability = discovery?.capabilities?.mappings?.rpc?.families?.[family];
+    if (!capability || capability.server_rpc !== true) {
+      throw new Error(`server RPC family is not available: ${family}`);
+    }
+    for (const [field, write, execution] of [
+      ['sync_reads', false, 'sync'],
+      ['task_reads', false, 'task'],
+      ['sync_writes', true, 'sync'],
+      ['task_writes', true, 'task'],
+    ]) {
+      if (Array.isArray(capability[field]) && capability[field].includes(operation)) {
+        return { mapping: null, capability, spec: { write, execution } };
+      }
+    }
+    throw new Error(`server RPC operation is not advertised: ${family}.${operation}`);
+  }
+
+  async function rpcOperation(mappingId, family, operation, exec) {
+    if (mappingId !== undefined) {
+      if (typeof mappingId !== 'string' || !mappingId) throw new Error('mapping_id must be a non-empty mapping id when provided');
+      return mappingRpcOperation(mappingId, family, operation, exec);
+    }
+    return serverRpcOperation(family, operation, exec);
+  }
+
   /** Resolve the (plan_id, taskname, message) Context every mutation requires. */
   async function mutationContext(args, exec) {
     const state = stateOf(exec);
@@ -562,18 +589,25 @@ export function apply(ctx, config = {}) {
       output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
       async execute(args, exec) {
         const method = String(args.method).toUpperCase();
-        const rpcMatch = /^\/?mappings\/([A-Za-z0-9_-]{24})\/rpc\/([a-z][a-z0-9_]{0,31})\/([a-z][a-z0-9_]{0,31})(?:\?|$)/.exec(args.endpoint);
+        const mappingRpcMatch = /^\/?mappings\/([A-Za-z0-9_-]{24})\/rpc\/([a-z][a-z0-9_]{0,31})\/([a-z][a-z0-9_]{0,31})(?:\?|$)/.exec(args.endpoint);
+        const serverRpcMatch = /^\/?rpc\/([a-z][a-z0-9_]{0,31})\/([a-z][a-z0-9_]{0,31})(?:\?|$)/.exec(args.endpoint);
         let rpcWrite = false;
-        if (method === 'POST' && rpcMatch) {
-          const { mapping, spec } = await mappingRpcOperation(rpcMatch[1], rpcMatch[2], rpcMatch[3], exec);
+        let rpcMatched = false;
+        if (method === 'POST' && mappingRpcMatch) {
+          const { mapping, spec } = await mappingRpcOperation(mappingRpcMatch[1], mappingRpcMatch[2], mappingRpcMatch[3], exec);
+          rpcMatched = true;
           rpcWrite = spec.write;
           if (rpcWrite && mapping.writable !== true) {
             throw new Error('mapping is read-only for this RPC write operation');
           }
+        } else if (method === 'POST' && serverRpcMatch) {
+          const { spec } = await serverRpcOperation(serverRpcMatch[1], serverRpcMatch[2], exec);
+          rpcMatched = true;
+          rpcWrite = spec.write;
         }
         const readPost = method === 'POST' && (
           /^\/?fs\/(read_many|manifest)(?:\?|$)/.test(args.endpoint)
-          || (rpcMatch && !rpcWrite)
+          || (rpcMatched && !rpcWrite)
         );
         const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !readPost;
         let ctxFields = null;
@@ -651,13 +685,13 @@ export function apply(ctx, config = {}) {
 
     defineTool({
       name: 'kapsel_rpc',
-      description: 'Invoke one dynamic mapping RPC operation. Inspect kapsel_mappings operation_specs first: execution=sync returns directly; execution=task returns a persistent client task_id that survives provider reconnects—poll it with kapsel_task_output and do not replay a write RPC after transport uncertainty. write=true requires DSH write approval plus OpenKapsel Plan/Context and a writable mapping. Future plugin families require no new DSH tool. No server/FUSE fallback.',
+      description: 'Invoke one dynamic RPC operation on the server workspace or a client mapping. Omit mapping_id for server RPC; provide mapping_id for client RPC. Server-capable families/operations come from Discovery, while mapping operations use kapsel_mappings operation_specs. execution=sync returns directly; execution=task returns a task_id polled with kapsel_task_output. Never replay an uncertain write-task start. write=true requires DSH write approval plus OpenKapsel Plan/Context; mapped writes also require an administratively writable mapping. No server/mapping/FUSE fallback after the target is selected.',
       parameters: {
-        mapping_id: { type: 'string', required: true, description: 'Mapping id from kapsel_mappings.' },
-        family: { type: 'string', required: true, description: 'Advertised RPC plugin family.' },
-        operation: { type: 'string', required: true, description: 'Advertised RPC plugin operation.' },
-        args: { type: 'object', additionalProperties: true, description: 'Plugin-specific argument object matching the advertised input_schema.' },
-        timeout_seconds: { type: 'number', description: 'Optional deadline for execution=task; cannot exceed the client max_seconds policy.' },
+        mapping_id: { type: 'string', description: 'Optional mapping id from kapsel_mappings. Omit to target the server workspace.' },
+        family: { type: 'string', required: true, description: 'RPC plugin family advertised for the selected target.' },
+        operation: { type: 'string', required: true, description: 'RPC plugin operation advertised for the selected target.' },
+        args: { type: 'object', additionalProperties: true, description: 'Plugin-specific argument object matching the advertised contract.' },
+        timeout_seconds: { type: 'number', description: 'Optional execution=task deadline. Server RPC allows up to 86400 seconds; mapping RPC also obeys the client task policy.' },
         plan_id: { type: 'number', description: 'Owning Plan id for write=true operations; omitted uses/creates the session Plan.' },
         taskname: { type: 'string', description: TASKNAME_DESCRIPTION },
         message: { type: 'string', description: MESSAGE_DESCRIPTION },
@@ -665,10 +699,13 @@ export function apply(ctx, config = {}) {
       },
       output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
       async execute(args, exec) {
-        const { mapping, spec } = await mappingRpcOperation(args.mapping_id, args.family, args.operation, exec);
-        const endpoint = `mappings/${encodeURIComponent(args.mapping_id)}/rpc/${encodeURIComponent(args.family)}/${encodeURIComponent(args.operation)}`;
+        const { mapping, spec } = await rpcOperation(args.mapping_id, args.family, args.operation, exec);
+        const targetPrefix = args.mapping_id === undefined
+          ? 'rpc'
+          : `mappings/${encodeURIComponent(args.mapping_id)}/rpc`;
+        const endpoint = `${targetPrefix}/${encodeURIComponent(args.family)}/${encodeURIComponent(args.operation)}`;
         if (spec.write) {
-          if (mapping.writable !== true) throw new Error('mapping is read-only for this RPC write operation');
+          if (mapping && mapping.writable !== true) throw new Error('mapping is read-only for this RPC write operation');
           await authorizeRemoteMutation(args, exec, 'kapsel_rpc', `remote RPC ${args.family}.${args.operation}`);
           const context = await mutationContext(args, exec);
           return http('POST', endpoint, {
@@ -1122,7 +1159,7 @@ export function apply(ctx, config = {}) {
     systemPrompt.section({
       name: 'kapsel',
       order: 195,
-      text: `OpenKapsel workspace access is available through the \`kapsel_*\` tools. When a user supplies an OpenKapsel workspace URL and control token, call \`kapsel_config\` once to initialize it, then operate the remote workspace through the typed tools or \`kapsel_http\`. Use \`kapsel_plan_update\` for Plan updates and completion; its typed debrief avoids ambiguous generic request fields. When runtime Discovery advertises atomic_subplans, create a parent and direct children in one kapsel_http POST context call using subplans and a stable request_id inside json; use the returned child IDs for later operations. The authoritative REST contract is the vendored \`${SKILL_NAME}\` skill — load it with the \`skill\` tool before nontrivial operations. On RPC-first servers, online=true with mounted=false is normal: use file/RPC tools without mounting. Keep Shell target=auto unless server execution is intended; declare extra server native dependencies with mount_mappings, and FastAPI dependencies in api/mappings.json. Never automatically replay a Shell/RPC write after a timeout, cancellation, or lost response; inspect existing tasks and affected paths first. Check unavailable_mappings and truncated query results before claiming a search is complete. DSH \`read-only\` mode permits remote reads but denies remote writes, edits, Shell commands, and mutating HTTP methods. After such a denial, retry the exact call with \`sandbox_permissions: "workspace-write"\` and a one-sentence \`justification\` only when the mutation is necessary; approval applies to that call alone. DSH \`workspace-write\` and \`danger-full-access\` are equivalent for this bridge because the OpenKapsel token remains the remote authority boundary. Never print or commit the control token.`,
+      text: `OpenKapsel workspace access is available through the \`kapsel_*\` tools. When a user supplies an OpenKapsel workspace URL and control token, call \`kapsel_config\` once to initialize it, then operate the remote workspace through the typed tools or \`kapsel_http\`. Use \`kapsel_plan_update\` for Plan updates and completion; its typed debrief avoids ambiguous generic request fields. When runtime Discovery advertises atomic_subplans, create a parent and direct children in one kapsel_http POST context call using subplans and a stable request_id inside json; use the returned child IDs for later operations. The authoritative REST contract is the vendored \`${SKILL_NAME}\` skill — load it with the \`skill\` tool before nontrivial operations. For RPC, call \`kapsel_rpc\` without \`mapping_id\` to target the server workspace, or provide \`mapping_id\` to target a client mapping; server-capable families come from Discovery and mapping operation schemas come from \`kapsel_mappings\`. On RPC-first servers, online=true with mounted=false is normal: use file/RPC tools without mounting. Keep Shell target=auto unless server execution is intended; declare extra server native dependencies with mount_mappings, and FastAPI dependencies in api/mappings.json. Never automatically replay a Shell/RPC write after a timeout, cancellation, or lost response; inspect existing tasks and affected paths first. Check unavailable_mappings and truncated query results before claiming a search is complete. DSH \`read-only\` mode permits remote reads but denies remote writes, edits, Shell commands, and mutating HTTP methods. After such a denial, retry the exact call with \`sandbox_permissions: "workspace-write"\` and a one-sentence \`justification\` only when the mutation is necessary; approval applies to that call alone. DSH \`workspace-write\` and \`danger-full-access\` are equivalent for this bridge because the OpenKapsel token remains the remote authority boundary. Never print or commit the control token.`,
     });
   }
 

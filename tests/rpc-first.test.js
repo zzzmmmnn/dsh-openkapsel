@@ -11,6 +11,12 @@ const mapping = {
   capabilities: { file_stream: { version: 1, descriptor_stat: true, directory_details: true, search_prefix: true } },
 };
 const partial = { matches: [], truncated: true, unavailable_mappings: [{ mapping_id: mapping.id, code: 'mapping_offline' }] };
+const serverDiscovery = {
+  capabilities: { mappings: { rpc: { families: {
+    git: { server_rpc: true, sync_reads: ['status', 'diff'], task_writes: ['commit', 'fetch'] },
+    archive: { server_rpc: true, sync_reads: ['list', 'read'], task_writes: ['create', 'extract'] },
+  } } } },
+};
 
 function fixture(t, config = {}, mode = 'workspace-write', response) {
   const stateDir = mkdtempSync(join(tmpdir(), 'dsh-rpc-first-'));
@@ -31,6 +37,7 @@ function fixture(t, config = {}, mode = 'workspace-write', response) {
           return { exitCode: 1, stderr: { text: failure }, stdout: { text: '' } };
         }
         const result = response ?? (call.endpoint === 'context' ? (call.method === 'GET' ? { entries: [{ id: 7, taskname: 'test' }] } : { id: 7 })
+          : call.endpoint === '/' ? serverDiscovery
           : call.endpoint === 'mappings' ? { mappings: [mapping] }
           : call.endpoint === 'fs/search' ? partial : { task_id: 'task_test', location: 'server' });
         return { exitCode: 0, stdout: { text: JSON.stringify(result) } };
@@ -134,11 +141,51 @@ test('RPC-only status and incomplete query metadata pass through without mounts'
   assert.ok(f.calls.every(c => c.method === 'GET' && !c.plan));
 });
 
-test('bundled skill and prompt teach RPC-first mapping usage', t => {
+test('kapsel_rpc targets server when mapping_id is omitted and preserves read/write policy', async t => {
+  const readonly = fixture(t, {}, 'read-only');
+  const rpc = readonly.tools.get('kapsel_rpc');
+  assert.ok(!rpc.parameters.required?.includes('mapping_id'));
+  await rpc.execute({ family: 'git', operation: 'status', args: { path: '.' } }, readonly.exec);
+  assert.deepEqual(readonly.calls.map(c => [c.method, c.endpoint]), [
+    ['GET', '/'],
+    ['POST', 'rpc/git/status'],
+  ]);
+  assert.equal(readonly.calls[1].plan, undefined);
+
+  await readonly.tools.get('kapsel_http').execute({
+    method: 'POST', endpoint: 'rpc/archive/list', json: { args: { path: 'sample.zip' } },
+  }, readonly.exec);
+  assert.deepEqual(readonly.calls.slice(-2).map(c => [c.method, c.endpoint]), [
+    ['GET', '/'],
+    ['POST', 'rpc/archive/list'],
+  ]);
+  assert.equal(readonly.calls.at(-1).plan, undefined);
+
+  const writable = fixture(t);
+  await writable.tools.get('kapsel_rpc').execute({
+    family: 'git', operation: 'commit', args: { message: 'test' }, timeout_seconds: 30,
+    plan_id: 7, taskname: 'git', message: 'Commit server repository',
+  }, writable.exec);
+  assert.equal(writable.calls[0].endpoint, '/');
+  assert.equal(writable.calls[1].endpoint, 'rpc/git/commit');
+  assert.deepEqual(writable.calls[1].body, { args: { message: 'test' }, timeout_seconds: 30 });
+  assert.equal(writable.calls[1].plan, '7');
+  assert.equal(writable.calls[1].taskname, 'git');
+  assert.equal(writable.calls[1].message, 'Commit server repository');
+
+  await assert.rejects(
+    writable.tools.get('kapsel_rpc').execute({ family: 'git', operation: 'unknown' }, writable.exec),
+    /not advertised/,
+  );
+  assert.equal(writable.calls.at(-1).endpoint, '/');
+});
+
+test('bundled skill and prompt teach unified server and mapping RPC usage', t => {
   const f = fixture(t);
   const text = f.skills[0].content;
-  for (const term of ['mount_mappings', 'api/mappings.json', 'file_stream', 'unavailable_mappings', 'rpc.file has been removed']) assert.ok(text.includes(term), term);
+  for (const term of ['mount_mappings', 'api/mappings.json', 'file_stream', 'unavailable_mappings', 'rpc.file has been removed', 'POST /rpc/<family>/<operation>']) assert.ok(text.includes(term), term);
   assert.doesNotMatch(text, /It may fall back to FUSE|`rpc\.file`, `rpc\.git`/);
+  assert.match(f.prompts.join('\n'), /server workspace/);
   assert.match(f.prompts.join('\n'), /mounted=false/);
   assert.match(f.prompts.join('\n'), /mount_mappings/);
 });
