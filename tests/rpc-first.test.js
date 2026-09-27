@@ -39,7 +39,7 @@ function fixture(t, config = {}, mode = 'workspace-write', response) {
         const result = response ?? (call.endpoint === 'context' ? (call.method === 'GET' ? { entries: [{ id: 7, taskname: 'test' }] } : { id: 7 })
           : call.endpoint === '/' ? serverDiscovery
           : call.endpoint === 'mappings' ? { mappings: [mapping] }
-          : call.endpoint === 'fs/search' ? partial : { task_id: 'task_test', location: 'server' });
+          : call.endpoint === 'fs/query/search' ? partial : { task_id: 'task_test', location: 'server' });
         return { exitCode: 0, stdout: { text: JSON.stringify(result) } };
       },
     },
@@ -137,7 +137,7 @@ test('RPC-only status and incomplete query metadata pass through without mounts'
   const f = fixture(t, {}, 'read-only');
   assert.deepEqual(await f.tools.get('kapsel_mappings').execute({}, f.exec), { mappings: [mapping] });
   assert.deepEqual(await f.tools.get('kapsel_fs_search').execute({ query: 'needle', path: '.' }, f.exec), partial);
-  assert.deepEqual(f.calls.map(c => c.endpoint), ['mappings', 'fs/search']);
+  assert.deepEqual(f.calls.map(c => c.endpoint), ['mappings', 'fs/query/search']);
   assert.ok(f.calls.every(c => c.method === 'GET' && !c.plan));
 });
 

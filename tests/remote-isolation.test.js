@@ -86,7 +86,7 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     const [, workspace, endpointWithQuery] = match;
     const endpoint = endpointWithQuery.split('?', 1)[0];
     requestLog.push({ workspace, method: request.method, endpoint });
-    if (['fs/read_many', 'fs/manifest', 'fs/search'].includes(endpoint) || endpoint.startsWith('git/')) {
+    if (['fs/read/many', 'fs/query/manifest', 'fs/query/search'].includes(endpoint)) {
       const data = request.method === 'POST' ? JSON.parse((await requestBody(request)).toString('utf8')) : null;
       return json(response, 200, { items: [], endpoint, query: [...new URL(request.url, 'http://localhost').searchParams], body: data });
     }
@@ -100,14 +100,14 @@ test('two agents mutate only their own remote workspace and never the local cwd'
         authentication: { control_token_expires_at: '2099-01-01T00:00:00Z' },
       });
     }
-    if (request.method === 'GET' && endpoint === 'fs/list') {
+    if (request.method === 'GET' && endpoint === 'fs/query/list') {
       return json(response, 200, {
         path: '/remote/workspace',
         entries: [{ name: 'remote-file.txt', path: '/remote/workspace/remote-file.txt', type: 'file' }],
         total: 1,
       });
     }
-    if (request.method === 'GET' && endpoint === 'fs/stat') {
+    if (request.method === 'GET' && endpoint === 'fs/query/stat') {
       return json(response, 200, {
         path: '/remote/workspace',
         fields: ['type', 'size'],
@@ -154,12 +154,6 @@ test('two agents mutate only their own remote workspace and never the local cwd'
         } } },
       }] });
     }
-    if (request.method === 'GET' && endpoint === 'archive/list') {
-      return json(response, 200, { path: 'laptop/sample.zip', location: 'client', entries: [{ name: 'hello.txt', type: 'file' }] });
-    }
-    if (request.method === 'GET' && endpoint === 'archive/read') {
-      return json(response, 200, { path: 'laptop/sample.zip', location: 'client', member: 'hello.txt', content: 'hello' });
-    }
     if (request.method === 'POST' && (
       endpoint === `mappings/${mappingId}/rpc/vendor/inspect`
       || endpoint === `mappings/${mappingId}/rpc/vendor/update`
@@ -185,7 +179,7 @@ test('two agents mutate only their own remote workspace and never the local cwd'
         result: operation === 'update' ? { updated: body.args?.value } : { ok: true, value: body.args?.value },
       });
     }
-    if (request.method === 'POST' && (endpoint === 'fs/copy' || endpoint === 'fs/move')) {
+    if (request.method === 'POST' && (endpoint === 'fs/write/copy' || endpoint === 'fs/write/move')) {
       mappingBodies.push({ endpoint, body: JSON.parse((await requestBody(request)).toString('utf8')) });
       return json(response, 202, { id: transferId, state: 'running' });
     }
@@ -202,15 +196,6 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     if ((endpoint === 'recycle/restore' || endpoint === 'recycle/purge') && request.method === 'POST') {
       mappingBodies.push({ endpoint, body: JSON.parse((await requestBody(request)).toString('utf8')) });
       return json(response, 200, { restored: endpoint === 'recycle/restore' });
-    }
-    const taskBase = `mappings/${mappingId}/tasks`;
-    if (endpoint === taskBase && request.method === 'GET') return json(response, 200, { tasks: [] });
-    if (endpoint === taskBase && request.method === 'POST') {
-      mappingBodies.push({ endpoint, body: JSON.parse((await requestBody(request)).toString('utf8')) });
-      return json(response, 202, { task_id: clientTaskId });
-    }
-    if (endpoint === `${taskBase}/${clientTaskId}` && request.method === 'GET') {
-      return json(response, 200, { task_id: clientTaskId, output: Buffer.from('lo').toString('base64'), next_offset: 5 });
     }
     if (endpoint === 'shell/exec' && request.method === 'POST') {
       mappingBodies.push({ endpoint, body: JSON.parse((await requestBody(request)).toString('utf8')) });
@@ -234,10 +219,6 @@ test('two agents mutate only their own remote workspace and never the local cwd'
       mappingBodies.push({ endpoint, body: JSON.parse((await requestBody(request)).toString('utf8')) });
       return json(response, 200, { task_id: rpcTaskId, kind: 'rpc', status: 'running' });
     }
-    if (endpoint.startsWith(`${taskBase}/${clientTaskId}/`) && request.method === 'POST') {
-      mappingBodies.push({ endpoint, body: JSON.parse((await requestBody(request)).toString('utf8')) });
-      return json(response, 200, { task_id: clientTaskId, state: 'running' });
-    }
     if (request.method === 'GET' && endpoint === 'context') {
       return json(response, 200, { entries: contextEntries });
     }
@@ -249,11 +230,12 @@ test('two agents mutate only their own remote workspace and never the local cwd'
       contextPatchBodies.push(body);
       return json(response, 200, { id: 1, ...body });
     }
-    if (request.method === 'POST' && endpoint === 'fs/write') {
+    if (request.method === 'POST' && endpoint === 'fs/write/mutate') {
       const body = JSON.parse((await requestBody(request)).toString('utf8'));
       writeBodies.push(body);
-      files.get(workspace).set(body.path, body.content);
-      return json(response, 200, { path: body.path, written: true });
+      const item = body.items?.[0];
+      if (item?.path && typeof item.content === 'string') files.get(workspace).set(item.path, item.content);
+      return json(response, 200, { committed: true, items: [{ path: item?.path, etag: 'etag-new' }] });
     }
     return json(response, 404, { error: 'unknown_endpoint' });
   });
@@ -414,14 +396,14 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     }, { agent: agentA, signal });
     assert.equal(copy.id, transferId);
     assert.deepEqual(mappingBodies.at(-1), {
-      endpoint: 'fs/copy',
+      endpoint: 'fs/write/copy',
       body: { source: 'document.txt', destination: 'laptop/document.txt',
         plan_id: 1, taskname: 'mapping-test', message: 'exercise mapping operation' },
     });
     await registered.get('kapsel_fs_move').execute({
       source: 'laptop/document.txt', destination: 'document.txt', ...operation,
     }, { agent: agentA, signal });
-    assert.equal(mappingBodies.at(-1).endpoint, 'fs/move');
+    assert.equal(mappingBodies.at(-1).endpoint, 'fs/write/move');
     assert.equal((await registered.get('kapsel_transfer').execute({
       transfer_id: transferId, action: 'status',
     }, { agent: agentA, signal })).state, 'running');
@@ -451,33 +433,6 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     }, { agent: agentA, signal });
     assert.equal(mappingBodies.at(-1).body.confirm, true);
 
-    assert.deepEqual((await registered.get('kapsel_client_task').execute({
-      mapping_id: mappingId, action: 'list',
-    }, { agent: agentA, signal })).tasks, []);
-    const started = await registered.get('kapsel_client_task').execute({
-      mapping_id: mappingId, action: 'start', argv: ['python3', '-V'], cwd: '.', ...operation,
-    }, { agent: agentA, signal });
-    assert.equal(started.task_id, clientTaskId);
-    assert.deepEqual(mappingBodies.at(-1).body.argv, ['python3', '-V']);
-    const clientOutput = await registered.get('kapsel_client_task').execute({
-      mapping_id: mappingId, action: 'status', task_id: clientTaskId, offset: 3,
-    }, { agent: agentA, signal });
-    assert.equal(clientOutput.next_offset, 5);
-    assert.equal(Buffer.from(clientOutput.output, 'base64').toString('utf8'), 'lo');
-    await registered.get('kapsel_client_task').execute({
-      mapping_id: mappingId, action: 'stdin', task_id: clientTaskId, stdin_text: 'héllo', ...operation,
-    }, { agent: agentA, signal });
-    assert.equal(mappingBodies.at(-1).body.data, Buffer.from('héllo').toString('base64'));
-    await registered.get('kapsel_client_task').execute({
-      mapping_id: mappingId, action: 'stdin', task_id: clientTaskId, eof: true, ...operation,
-    }, { agent: agentA, signal });
-    assert.equal(mappingBodies.at(-1).body.eof, true);
-    for (const action of ['interrupt', 'kill']) {
-      await registered.get('kapsel_client_task').execute({
-        mapping_id: mappingId, action, task_id: clientTaskId, ...operation,
-      }, { agent: agentA, signal });
-      assert.equal(mappingBodies.at(-1).endpoint, `mappings/${mappingId}/tasks/${clientTaskId}/${action}`);
-    }
     const unified = await registered.get('kapsel_shell_exec').execute({
       command: 'echo mapped', cwd: 'laptop/project', target: 'client', ...operation,
     }, { agent: agentA, signal });
@@ -509,13 +464,10 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     sandboxModes.set('session-a', 'read-only');
     const readStart = requestLog.length;
     for (const [name, args] of [
-      ['kapsel_git', { action: 'status' }],
       ['kapsel_fs_read_many', { paths: ['a', 'b'] }],
       ['kapsel_fs_manifest', { recursive: true, path: '.' }],
-      ['kapsel_http', { method: 'POST', endpoint: 'fs/read_many', json: { paths: ['a'] } }],
-      ['kapsel_http', { method: 'POST', endpoint: 'fs/manifest', json: { items: [{ path: 'a' }] } }],
-      ['kapsel_archive', { action: 'list', path: 'laptop/sample.zip' }],
-      ['kapsel_archive', { action: 'read', path: 'laptop/sample.zip', member: 'hello.txt' }],
+      ['kapsel_http', { method: 'POST', endpoint: 'fs/read/many', json: { paths: ['a'] } }],
+      ['kapsel_http', { method: 'POST', endpoint: 'fs/query/manifest', json: { items: [{ path: 'a' }] } }],
       ['kapsel_rpc', { mapping_id: mappingId, family: 'vendor', operation: 'inspect', args: { value: 7 } }],
       ['kapsel_http', { method: 'POST', endpoint: `mappings/${mappingId}/rpc/vendor/inspect`, json: { args: { value: 8 } } }],
     ]) await registered.get(name).execute(args, { agent: agentA, signal });
@@ -527,7 +479,6 @@ test('two agents mutate only their own remote workspace and never the local cwd'
       ['kapsel_fs_copy', { source: 'a', destination: 'laptop/a', ...operation }],
       ['kapsel_transfer', { transfer_id: transferId, action: 'cancel', ...operation }],
       ['kapsel_recycle', { action: 'purge', recycle_id: 'recycle-1', confirm: true, ...operation }],
-      ['kapsel_client_task', { mapping_id: mappingId, action: 'start', argv: ['python3'], ...operation }],
     ]) {
       await assert.rejects(registered.get(toolName).execute(args, { agent: agentA, signal }), /read-only mode/);
     }
@@ -574,7 +525,7 @@ test('two agents mutate only their own remote workspace and never the local cwd'
 
     await assert.rejects(
       registered.get('kapsel_fs_replace').execute({
-        path: 'denied.txt', old: 'a', new: 'b', plan_id: 1, taskname: 'test', message: 'deny edit',
+        path: 'denied.txt', old: 'a', new: 'b', expected_etag: 'etag-old', plan_id: 1, taskname: 'test', message: 'deny edit',
       }, { agent: agentA, callId: 'denied-edit', signal }),
       /read-only mode/,
     );
@@ -594,7 +545,7 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     await assert.rejects(
       registered.get('kapsel_http').execute({
         method: 'GET',
-        endpoint: 'fs/list',
+        endpoint: 'fs/query/list',
         sandbox_permissions: 'workspace-write',
         justification: 'A read does not need escalation.',
       }, { agent: agentA, callId: 'invalid-read-escalation', signal }),
@@ -641,14 +592,13 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     assert.equal(mappingBodies.at(-1).body.message, 'approved task rpc write');
     assert.equal(approvalRequests.at(-1).toolName, 'kapsel_rpc');
 
-    const rpcStatus = await registered.get('kapsel_client_task').execute({
-      mapping_id: mappingId,
-      action: 'status',
-      task_id: rpcTaskId,
-    }, { agent: agentA, signal });
+    const rpcStatus = (await registered.get('kapsel_http').execute({
+      method: 'GET',
+      endpoint: 'tasks/' + rpcTaskId,
+    }, { agent: agentA, signal })).body;
     assert.equal(rpcStatus.kind, 'rpc');
     assert.equal(rpcStatus.rpc_operation, 'task_update');
-    assert.equal(requestLog.at(-1).endpoint, `tasks/${rpcTaskId}`);
+    assert.equal(requestLog.at(-1).endpoint, 'tasks/' + rpcTaskId);
 
     const rpcOutput = await registered.get('kapsel_task_output').execute({
       task_id: rpcTaskId,
@@ -677,15 +627,15 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     sandboxModes.set('session-a', 'workspace-write');
 
     for (const action of ['interrupt', 'kill']) {
-      await registered.get('kapsel_client_task').execute({
-        mapping_id: mappingId,
-        action,
-        task_id: rpcTaskId,
+      await registered.get('kapsel_http').execute({
+        method: 'POST',
+        endpoint: 'tasks/' + rpcTaskId + '/' + action,
+        json: {},
         plan_id: 1,
         taskname: 'test',
         message: action + ' rpc task',
       }, { agent: agentA, signal });
-      assert.equal(mappingBodies.at(-1).endpoint, `tasks/${rpcTaskId}/${action}`);
+      assert.equal(mappingBodies.at(-1).endpoint, 'tasks/' + rpcTaskId + '/' + action);
     }
 
     await registered.get('kapsel_fs_write').execute({

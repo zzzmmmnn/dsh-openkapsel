@@ -6,17 +6,14 @@ Restricted Shell and full Shell have different boundaries. Restricted Shell is c
 
 ## Git inspection
 
-Git inspection is a read-only file capability, not Shell execution. REST needs
-only the workspace read URL; MCP uses its existing connection authentication.
-It works with Shell disabled, client `allow_exec=false`, and read-only mappings.
+Git inspection is a read-only RPC capability, not Shell execution. REST uses
+`POST /rpc/git/<operation>` for the server workspace or
+`POST /mappings/<mapping_id>/rpc/git/<operation>` for a mapped repository.
+MCP uses the same `git` family through the generic `rpc` tool. Reads work
+with Shell disabled, client `allow_exec=false`, and read-only mappings.
 
-| GET endpoint | Parameters besides `path` and repeated literal `file` |
-|---|---|
-| `/git/status` | Porcelain v1 status |
-| `/git/diff`, `/git/diff_stat` | `staged`, `revision`, `to_revision` |
-| `/git/log` | `revision=HEAD`, `limit=20` (max 200), `skip=0` |
-| `/git/show` | `revision=HEAD`, including `HEAD:relative/file` |
-| `/git/ls_files` | Tracked files |
+Supported read operations are `status`, `diff`, `diff_stat`, `log`,
+`show`, and `ls_files`. Put operation-specific parameters under `args`.
 
 `path` must identify a repository root with an ordinary SHA-1 `.git` directory.
 Git runs on a private sanitized temporary snapshot: source config, includes,
@@ -102,7 +99,8 @@ token tasks and workspace client tasks; `target=server|client` filters it.
 Inspect `unavailable_mappings` rather than assuming missing tasks stopped.
 Reconnect preserves client tasks while the client process remains alive;
 never automatically retry a start whose response was lost. Schedules remain
-server-side; mapping-specific argv task APIs remain available.
+server-side; client execution uses unified `/shell/exec` and `/tasks/*` routes,
+with no mapping-specific public task or argv REST endpoints.
 
 `POST /shell/exec` returns `202` with `task_id`:
 

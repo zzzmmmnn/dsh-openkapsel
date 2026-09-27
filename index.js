@@ -51,7 +51,6 @@ export const REMOTE_TOOL_NAMES = Object.freeze([
   'kapsel_status',
   'kapsel_plan_update',
   'kapsel_http',
-  'kapsel_git',
   'kapsel_fs_read_many',
   'kapsel_fs_manifest',
   'kapsel_fs_search',
@@ -61,13 +60,11 @@ export const REMOTE_TOOL_NAMES = Object.freeze([
   'kapsel_fs_write',
   'kapsel_fs_replace',
   'kapsel_mappings',
-  'kapsel_archive',
   'kapsel_rpc',
   'kapsel_fs_copy',
   'kapsel_fs_move',
   'kapsel_transfer',
   'kapsel_recycle',
-  'kapsel_client_task',
   'kapsel_shell_exec',
   'kapsel_task_output',
 ]);
@@ -574,7 +571,7 @@ export function apply(ctx, config = {}) {
         'Send a generic request to the selected OpenKapsel workspace through the openkapsel_http helper and return the parsed (or raw) response. Use it for surfaces beyond the typed tools — Context except Plan updates, Memory, sharing, preview, schedules, and advanced mapping operations — by following the `openkapsel-rest` skill (load it with the `skill` tool). Use kapsel_plan_update for Plan updates and completion.',
       parameters: {
         method: { type: 'string', required: true, enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'], description: 'HTTP method.' },
-        endpoint: { type: 'string', required: true, description: 'Workspace-relative path (e.g. "fs/list", "context") or a control-authenticated /transfer/ URL.' },
+        endpoint: { type: 'string', required: true, description: 'Workspace-relative path (e.g. "fs/query/list", "context") or a control-authenticated /transfer/ URL.' },
         query: { type: 'object', additionalProperties: true, description: 'Query-string parameters.' },
         json: {
           type: 'object',
@@ -606,7 +603,7 @@ export function apply(ctx, config = {}) {
           rpcWrite = spec.write;
         }
         const readPost = method === 'POST' && (
-          /^\/?fs\/(read_many|manifest)(?:\?|$)/.test(args.endpoint)
+          /^\/?fs\/(?:read\/many|query\/manifest)(?:\?|$)/.test(args.endpoint)
           || (rpcMatched && !rpcWrite)
         );
         const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !readPost;
@@ -652,34 +649,6 @@ export function apply(ctx, config = {}) {
       output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
       async execute(_args, exec) {
         return http('GET', 'mappings', { exec, signal: exec.signal });
-      },
-    }),
-
-    defineTool({
-      name: 'kapsel_archive',
-      description: 'Browse or read a bounded member from a ZIP/tar archive without extracting it. Local workspace archives are read on the server; mapped archives use the client Archive RPC plugin.',
-      parameters: {
-        action: { type: 'string', required: true, enum: ['list', 'read'] },
-        path: { type: 'string', required: true, description: 'Workspace-relative archive path.' },
-        inner_path: { type: 'string', description: 'Archive-internal directory for list.' },
-        member: { type: 'string', description: 'Archive member required for read.' },
-        offset: { type: 'integer' },
-        limit: { type: 'integer' },
-        encoding: { type: 'string', description: 'Text decoding for read, default UTF-8.' },
-      },
-      output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
-      async execute(args, exec) {
-        if (args.action === 'list') {
-          return http('GET', 'archive/list', {
-            query: { path: args.path, inner_path: args.inner_path, offset: args.offset, limit: args.limit },
-            exec, signal: exec.signal,
-          });
-        }
-        if (!args.member) throw new Error('member is required for archive read');
-        return http('GET', 'archive/read', {
-          query: { path: args.path, member: args.member, offset: args.offset, limit: args.limit, encoding: args.encoding },
-          exec, signal: exec.signal,
-        });
       },
     }),
 
@@ -735,7 +704,7 @@ export function apply(ctx, config = {}) {
 
     defineTool({
       name: 'kapsel_fs_copy',
-      description: 'Start an asynchronous, verified copy between workspace and client mappings or between two mappings (POST /fs/copy). Never overwrites; poll kapsel_transfer with the returned id.',
+      description: 'Start an asynchronous, verified copy between workspace and client mappings or between two mappings (POST /fs/write/copy). Never overwrites; poll kapsel_transfer with the returned id.',
       parameters: {
         source: { type: 'string', required: true, description: 'Workspace-relative source path.' },
         destination: { type: 'string', required: true, description: 'Workspace-relative destination path; its parent must exist.' },
@@ -748,7 +717,7 @@ export function apply(ctx, config = {}) {
       async execute(args, exec) {
         await authorizeRemoteMutation(args, exec, 'kapsel_fs_copy', 'remote file copy');
         const context = await mutationContext(args, exec);
-        return http('POST', 'fs/copy', {
+        return http('POST', 'fs/write/copy', {
           json: { source: args.source, destination: args.destination },
           planId: context.planId, taskname: context.taskname, message: context.message,
           exec, signal: exec.signal,
@@ -758,7 +727,7 @@ export function apply(ctx, config = {}) {
 
     defineTool({
       name: 'kapsel_fs_move',
-      description: 'Move a workspace path (POST /fs/move). Cross-root moves return an asynchronous transfer id; poll kapsel_transfer until complete. Existing destinations are never replaced.',
+      description: 'Move a workspace path (POST /fs/write/move). Cross-root moves return an asynchronous transfer id; poll kapsel_transfer until complete. Existing destinations are never replaced.',
       parameters: {
         source: { type: 'string', required: true, description: 'Workspace-relative source path.' },
         destination: { type: 'string', required: true, description: 'Workspace-relative destination path.' },
@@ -771,7 +740,7 @@ export function apply(ctx, config = {}) {
       async execute(args, exec) {
         await authorizeRemoteMutation(args, exec, 'kapsel_fs_move', 'remote file move');
         const context = await mutationContext(args, exec);
-        return http('POST', 'fs/move', {
+        return http('POST', 'fs/write/move', {
           json: { source: args.source, destination: args.destination },
           planId: context.planId, taskname: context.taskname, message: context.message,
           exec, signal: exec.signal,
@@ -844,106 +813,29 @@ export function apply(ctx, config = {}) {
       },
     }),
 
-    defineTool({
-      name: 'kapsel_client_task',
-      description: 'List/start legacy Shell tasks on a client mapping, and inspect/interrupt/kill either legacy raw task ids or unified client.<mapping>.<task> ids returned by kapsel_rpc/kapsel_shell_exec. RPC tasks do not accept stdin. Check kapsel_mappings first.',
-      parameters: {
-        mapping_id: { type: 'string', required: true, description: 'ID from kapsel_mappings.' },
-        action: { type: 'string', required: true, enum: ['list', 'start', 'status', 'stdin', 'interrupt', 'kill'] },
-        task_id: { type: 'string', description: 'Required for status, stdin, interrupt, or kill.' },
-        argv: { type: 'array', items: { type: 'string' }, description: 'Argument array required for start; not a Shell command string.' },
-        cwd: { type: 'string', description: 'Client export-relative working directory, default ".".' },
-        timeout_seconds: { type: 'number', description: 'Client task deadline; cannot exceed local policy.' },
-        offset: { type: 'integer', description: 'Output byte offset for status; advance using next_offset.' },
-        stdin_text: { type: 'string', description: 'UTF-8 stdin text, encoded as base64 by the plugin.' },
-        stdin_base64: { type: 'string', description: 'Pre-encoded stdin bytes; exclusive with stdin_text.' },
-        eof: { type: 'boolean', description: 'Close task stdin.' },
-        plan_id: { type: 'number' },
-        taskname: { type: 'string', description: TASKNAME_DESCRIPTION },
-        message: { type: 'string', description: MESSAGE_DESCRIPTION },
-        ...REMOTE_WRITE_ESCALATION_PARAMETERS,
-      },
-      output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
-      async execute(args, exec) {
-        const base = `mappings/${encodeURIComponent(args.mapping_id)}/tasks`;
-        const unified = typeof args.task_id === 'string' && args.task_id.startsWith('client.');
-        if (unified && !args.task_id.startsWith(`client.${args.mapping_id}.`)) {
-          throw new Error('unified client task id does not belong to mapping_id');
-        }
-        if (args.action === 'list' || args.action === 'status') {
-          validateEscalationArgs(args.sandbox_permissions, args.justification);
-          if (args.sandbox_permissions !== undefined) throw new Error('task inspection is read-only; omit sandbox_permissions');
-          if (args.action === 'list') return http('GET', base, { exec, signal: exec.signal });
-          if (!args.task_id) throw new Error('task_id is required for status');
-          if (unified) {
-            if (args.offset !== undefined) throw new Error('use kapsel_task_output for offset-based unified task output');
-            return http('GET', `tasks/${encodeURIComponent(args.task_id)}`, { exec, signal: exec.signal });
-          }
-          return http('GET', `${base}/${encodeURIComponent(args.task_id)}`, {
-            query: { offset: args.offset ?? 0 }, exec, signal: exec.signal,
-          });
-        }
-        let json;
-        let endpoint = base;
-        if (args.action === 'start') {
-          if (!Array.isArray(args.argv) || args.argv.length === 0) throw new Error('start requires a non-empty argv array');
-          json = { argv: args.argv, cwd: args.cwd ?? '.' };
-          if (args.timeout_seconds !== undefined) json.timeout_seconds = args.timeout_seconds;
-        } else {
-          if (!args.task_id) throw new Error(`task_id is required for ${args.action}`);
-          if (unified) {
-            if (args.action === 'stdin') throw new Error('RPC/unified tasks do not accept stdin through kapsel_client_task');
-            endpoint = `tasks/${encodeURIComponent(args.task_id)}/${args.action}`;
-          } else {
-            endpoint += `/${encodeURIComponent(args.task_id)}/${args.action}`;
-          }
-          json = {};
-          if (args.action === 'stdin') {
-            if (args.stdin_text !== undefined && args.stdin_base64 !== undefined) throw new Error('choose stdin_text or stdin_base64');
-            if (args.eof === true && (args.stdin_text !== undefined || args.stdin_base64 !== undefined)) throw new Error('eof cannot include stdin data');
-            json.data = args.stdin_base64 ?? Buffer.from(args.stdin_text ?? '', 'utf8').toString('base64');
-            if (args.eof === true) json.eof = true;
-          }
-        }
-        await authorizeRemoteMutation(args, exec, 'kapsel_client_task', `remote client task ${args.action}`);
-        const context = await mutationContext(args, exec);
-        return http('POST', endpoint, {
-          json, planId: context.planId, taskname: context.taskname, message: context.message,
-          exec, signal: exec.signal,
-        });
-      },
-    }),
-
     ...[
-      ['kapsel_git', 'Read-only Git inspection; action is status/diff/diff_stat/log/show/ls_files. No Shell permission. Bounded sanitized snapshot; see shell reference for limits.', {
-        action: { type: 'string', enum: ['status', 'diff', 'diff_stat', 'log', 'show', 'ls_files'], required: true },
-        path: { type: 'string' }, revision: { type: 'string' }, to_revision: { type: 'string' }, staged: { type: 'boolean' },
-        file: { type: 'array', items: { type: 'string' } }, limit: { type: 'integer' }, skip: { type: 'integer' }, timeout_seconds: { type: 'integer' },
-      }, 'GET'],
       ['kapsel_fs_read_many', 'Read multiple UTF-8 files without mutation authorization or Plan creation.', {
         paths: { type: 'array', items: { type: 'string' }, required: true }, limit: { type: 'integer' }, max_total_chars: { type: 'integer' },
-      }, 'POST', 'fs/read_many'],
+      }, 'POST', 'fs/read/many'],
       ['kapsel_fs_manifest', 'Read batch metadata or recursive manifest; optional SHA256. Read-only.', {
         items: { type: 'array', items: { type: 'object', properties: { path: { type: 'string', required: true }, size: { type: 'integer' }, sha256: { type: 'string' } }, additionalProperties: false } },
         recursive: { type: 'boolean' }, path: { type: 'string' }, depth: { type: 'integer' }, include_sha256: { type: 'boolean' },
-      }, 'POST', 'fs/manifest'],
+      }, 'POST', 'fs/query/manifest'],
       ['kapsel_fs_search', 'Search UTF-8 files, with repeated include/exclude glob filters.', {
         path: { type: 'string' }, query: { type: 'string', required: true }, regex: { type: 'boolean' }, case_sensitive: { type: 'boolean' },
         depth: { type: 'integer' }, max_results: { type: 'integer' }, include: { type: 'array', items: { type: 'string' } }, exclude: { type: 'array', items: { type: 'string' } },
-      }, 'GET', 'fs/search'],
+      }, 'GET', 'fs/query/search'],
     ].map(([name, description, parameters, method, endpoint]) => defineTool({
       name, description, parameters,
       output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
       async execute(args, exec) {
-        const { action, ...fields } = args;
-        if (!endpoint && !['status', 'diff', 'diff_stat', 'log', 'show', 'ls_files'].includes(action)) throw new Error('Unsupported Git action');
-        return http(method, endpoint ?? `git/${action}`, { ...(method === 'GET' ? { query: fields } : { json: fields }), exec, signal: exec.signal });
+        return http(method, endpoint, { ...(method === 'GET' ? { query: args } : { json: args }), exec, signal: exec.signal });
       },
     })),
 
     defineTool({
       name: 'kapsel_fs_list',
-      description: 'List immediate children of a workspace directory (GET /fs/list).',
+      description: 'List immediate children of a workspace directory (GET /fs/query/list).',
       parameters: {
         path: { type: 'string', description: 'Workspace-relative path. Defaults to ".".' },
         offset: { type: 'integer', description: 'Pagination offset.' },
@@ -951,7 +843,7 @@ export function apply(ctx, config = {}) {
       },
       output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
       async execute(args, exec) {
-        return http('GET', 'fs/list', {
+        return http('GET', 'fs/query/list', {
           query: { path: args.path ?? '.', offset: args.offset, limit: args.limit },
           exec,
           signal: exec.signal,
@@ -961,7 +853,7 @@ export function apply(ctx, config = {}) {
 
     defineTool({
       name: 'kapsel_fs_read',
-      description: 'Read a UTF-8 text file from the workspace (GET /fs/read).',
+      description: 'Read a UTF-8 text file from the workspace (GET /fs/read/text).',
       parameters: {
         path: { type: 'string', required: true, description: 'Workspace-relative file path.' },
         offset: { type: 'integer', description: 'Character offset to skip before reading.' },
@@ -976,7 +868,7 @@ export function apply(ctx, config = {}) {
         }],
       },
       async execute(args, exec) {
-        return http('GET', 'fs/read', {
+        return http('GET', 'fs/read/text', {
           query: { path: args.path, offset: args.offset, byte_offset: args.byte_offset, limit: args.limit },
           exec,
           signal: exec.signal,
@@ -986,7 +878,7 @@ export function apply(ctx, config = {}) {
 
     defineTool({
       name: 'kapsel_fs_stat',
-      description: 'Return metadata for a workspace path (GET /fs/stat): type, size, timestamps, ETag, content type, options.',
+      description: 'Return metadata for a workspace path (GET /fs/query/stat): type, size, timestamps, ETag, content type, options.',
       parameters: {
         path: { type: 'string', required: true, description: 'Workspace-relative path.' },
         fields: { type: 'array', items: { type: 'string' }, description: 'Optional fields, e.g. ["type","size","etag","sha256"].' },
@@ -994,7 +886,7 @@ export function apply(ctx, config = {}) {
       output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
       async execute(args, exec) {
         const fields = (args.fields ?? ['type', 'size', 'etag', 'modified_at']).join(',');
-        return http('GET', 'fs/stat', {
+        return http('GET', 'fs/query/stat', {
           query: { path: args.path, fields },
           exec,
           signal: exec.signal,
@@ -1004,11 +896,11 @@ export function apply(ctx, config = {}) {
 
     defineTool({
       name: 'kapsel_fs_write',
-      description: 'Create or replace a UTF-8 text file in the workspace (POST /fs/write). Requires the control token and a Plan.',
+      description: 'Create a UTF-8 text file, or replace an existing file only with its exact expected_etag, via POST /fs/write/mutate.',
       parameters: {
         path: { type: 'string', required: true, description: 'Workspace-relative file path.' },
         content: { type: 'string', required: true, description: 'Complete new file content.' },
-        create_parents: { type: 'boolean', description: 'Create missing parent directories.' },
+        expected_etag: { type: 'string', description: 'Exact ETag required to replace an existing file. Omit for create-only.' },
         plan_id: { type: 'number' },
         taskname: { type: 'string', description: TASKNAME_DESCRIPTION },
         message: { type: 'string', description: MESSAGE_DESCRIPTION },
@@ -1018,8 +910,14 @@ export function apply(ctx, config = {}) {
       async execute(args, exec) {
         await authorizeRemoteMutation(args, exec, 'kapsel_fs_write', 'remote file write');
         const ctxFields = await mutationContext(args, exec);
-        return http('POST', 'fs/write', {
-          json: { path: args.path, content: args.content, ...(args.create_parents ? { create_parents: true } : {}) },
+        const item = {
+          op: args.expected_etag === undefined ? 'file.create' : 'file.replace',
+          path: args.path,
+          content: args.content,
+        };
+        if (args.expected_etag !== undefined) item.expected_etag = args.expected_etag;
+        return http('POST', 'fs/write/mutate', {
+          json: { items: [item] },
           planId: ctxFields.planId,
           taskname: ctxFields.taskname,
           message: ctxFields.message,
@@ -1032,13 +930,13 @@ export function apply(ctx, config = {}) {
     defineTool({
       name: 'kapsel_fs_replace',
       description:
-        'Replace literal text in a workspace file (POST /fs/replace). `old` must occur exactly once by default; set expected_matches or replace_all to change that.',
+        'Replace literal text through POST /fs/write/mutate. Requires the exact expected_etag and exact expected match count (default 1).',
       parameters: {
         path: { type: 'string', required: true },
         old: { type: 'string', required: true, description: 'Exact original text to replace.' },
         new: { type: 'string', required: true, description: 'Replacement text (use "" to delete).' },
-        expected_matches: { type: 'integer', description: 'Exact number of occurrences expected.' },
-        replace_all: { type: 'boolean', description: 'Replace every occurrence.' },
+        expected_etag: { type: 'string', required: true, description: 'Exact ETag from the preceding stat/read.' },
+        expected_matches: { type: 'integer', description: 'Exact number of occurrences expected; defaults to 1.' },
         plan_id: { type: 'number' },
         taskname: { type: 'string', description: TASKNAME_DESCRIPTION },
         message: { type: 'string', description: MESSAGE_DESCRIPTION },
@@ -1048,11 +946,14 @@ export function apply(ctx, config = {}) {
       async execute(args, exec) {
         await authorizeRemoteMutation(args, exec, 'kapsel_fs_replace', 'remote file edit');
         const ctxFields = await mutationContext(args, exec);
-        const json = { path: args.path, old: args.old, new: args.new };
-        if (args.expected_matches !== undefined) json.expected_matches = args.expected_matches;
-        if (args.replace_all) json.replace_all = true;
-        return http('POST', 'fs/replace', {
-          json,
+        const item = {
+          op: 'text.replace',
+          path: args.path,
+          expected_etag: args.expected_etag,
+          replacements: [{ old: args.old, new: args.new, expected_count: args.expected_matches ?? 1 }],
+        };
+        return http('POST', 'fs/write/mutate', {
+          json: { items: [item] },
           planId: ctxFields.planId,
           taskname: ctxFields.taskname,
           message: ctxFields.message,

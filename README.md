@@ -185,24 +185,23 @@ publishes none. Mount it in the dedicated agent preset, not globally.
 | `kapsel_fs_write` / `kapsel_fs_replace` | Remote text write/edit |
 | `kapsel_shell_exec` / `kapsel_task_output` | Run a Shell task on the server or a mapped client and poll its output |
 | `kapsel_mappings` | List mapped client directories, online status, and advertised execution/RPC capabilities |
-| `kapsel_archive` | Browse ZIP/tar archives or read a bounded member without extracting; mapped archives use client RPC |
 | `kapsel_rpc` | Unified server/mapping RPC entry: omit `mapping_id` for the server workspace or provide it for a client mapping; sync returns directly, task returns a normal server or unified client task id; writes use DSH approval + Plan/Context and mapped writes require a writable mapping |
 | `kapsel_fs_copy` / `kapsel_fs_move` / `kapsel_transfer` | Copy or move across workspace and client storage, then inspect/cancel/resume asynchronous transfers |
 | `kapsel_recycle` | List, restore, or explicitly purge an item in the selected storage root |
-| `kapsel_client_task` | List/start legacy client Shell tasks and inspect/interrupt/kill unified client task ids returned by `kapsel_rpc`/`kapsel_shell_exec`; RPC tasks do not accept stdin |
 | `kapsel_http` | Context, Memory, sharing, preview, schedules, and other REST surfaces |
 
-For client mappings, first call `kapsel_mappings` and inspect the client's reported platform and sandbox mode. `kapsel_client_task` takes an `argv` array and a client export-relative `cwd`; it does not use the server Shell. Client task output is returned as base64 with a `next_offset` cursor. An unsandboxed client task has that client's OS-account permissions. Mutating actions use the same DSH approval and OpenKapsel Plan attribution as the existing write tools. The bundled skill's `references/mappings.md` details the REST responses and failure states.
+For client mappings, first call `kapsel_mappings` and inspect the client's reported platform and sandbox mode. Shell execution uses `kapsel_shell_exec`; a mapped `cwd` with `target: "auto"` runs on that client and returns a unified task ID. Inspect output with `kapsel_task_output`, and use `kapsel_http` with the ordinary `/tasks/*` lifecycle for status, stdin, interrupt, or kill. Mapping-specific public task/argv REST endpoints are not exposed. An unsandboxed client task has that client's OS-account permissions.
 
 `kapsel_shell_exec` accepts `target: "auto"` (default), `"server"`, or
 `"client"`. Auto selects a connected client when `cwd` is inside its mapping
 (for example `laptop/project`), otherwise the server. A missing/denied client
-fails without server fallback. The client needs OpenKapsel 1.60.0+ and an
+fails without server fallback. The client needs OpenKapsel 1.62.0+ and an
 enabled writable execution mapping. Its own OS, sandbox, and limits apply;
 server `/env` settings are not injected. The returned task ID works with
 `kapsel_task_output` and the standard `/tasks` controls via `kapsel_http`.
 Client stdout/stderr are combined in stdout; client stdin chunks are at most
-16 KiB. Use `kapsel_client_task` when literal client `argv` is needed.
+16 KiB. The public execution interface is command-string based; there is no
+mapping-specific literal-argv REST endpoint.
 
 `kapsel_http.json` is always a JSON object. Endpoint fields belong inside it,
 not beside it. Context-management endpoints are handled specially because
@@ -280,9 +279,9 @@ the private state root.
 
 ## Unified RPC and read-side tools
 
-Version 0.9.0 adds `kapsel_git` (status/diff/diff_stat/log/show/ls_files),
-`kapsel_fs_read_many`, `kapsel_fs_manifest`, and `kapsel_fs_search`.
-The current unified RPC contract targets OpenKapsel 1.62.0+. Git read operations
+Version 0.9.0 added `kapsel_fs_read_many`, `kapsel_fs_manifest`, and
+`kapsel_fs_search`. The current unified RPC contract targets OpenKapsel 1.62.0+.
+Git and Archive operations use `kapsel_rpc`; Git read operations
 remain independent of Shell/client execution permission and use bounded
 sanitized snapshots. Git `add`, `commit`, `restore`, `checkout`,
 `fetch`, `pull`, and `clone` are `write=true, execution=task`;
@@ -297,20 +296,19 @@ publish per-operation `description`, JSON `input_schema`, boolean `write`,
 and `execution` through `kapsel_mappings`.
 
 A server task returns a normal server task id; a mapping task returns a unified
-`client.<mapping>.<task>` id. Poll either with `kapsel_task_output`. Mapping
-RPC tasks can additionally be inspected/controlled with `kapsel_client_task`;
-server task controls use the ordinary `/tasks` REST lifecycle. Never replay an
-uncertain write-task start. `write=true` always uses DSH approval plus
-OpenKapsel Plan/Context; mapped writes additionally require the mapping to be
-administratively writable. There is no server/mapping/FUSE fallback after the
-RPC target is selected. `kapsel_archive` remains a read-preview convenience
-tool; Archive create/extract use `kapsel_rpc`.
+`client.<mapping>.<task>` id. Poll either with `kapsel_task_output`; inspect or
+control either kind through ordinary `/tasks/*` routes with `kapsel_http`.
+Never replay an uncertain write-task start. `write=true` always uses DSH
+approval plus OpenKapsel Plan/Context; mapped writes additionally require the
+mapping to be administratively writable. There is no server/mapping/FUSE
+fallback after the RPC target is selected. Git reads/writes and Archive
+list/read/create/extract all use `kapsel_rpc`.
 
-The generic HTTP tool recognizes POST `fs/read_many` and `fs/manifest` as
+The generic HTTP tool recognizes POST `fs/read/many` and `fs/query/manifest` as
 read-only. It also classifies both `rpc/<family>/<operation>` and
 `mappings/<24-char-id>/rpc/<family>/<operation>` from runtime RPC metadata, so
 RPC reads bypass mutation approval while writes use approval and Plan
-attribution. Archive preview uses GET `archive/list` and `archive/read`.
+attribution. Archive preview uses generic `archive` RPC (`list`/`read`).
 Other POST operations retain their existing guard. Query values may be arrays
 to send repeated parameters, e.g. `include: ["*.py", "*.js"]` or
 `file: ["a", "b"]`. The vendored REST skill is synchronized with the main
@@ -334,10 +332,11 @@ be evicted earlier for capacity. Client process restarts do not restore tasks.
 Do not automatically replay a start whose response was lost.
 
 Text APIs default to UTF-8 without using the host locale. For a non-default
-encoding use `kapsel_http`: pass `encoding` in the `query` for GET `fs/read`,
-in `json` for POST `fs/read_many`, `fs/write`, or `fs/replace`, and in each
-`json.items[]` entry for `fs/replace/batch`. Typed file tools still use their
-existing default encoding; they do not expose this new field.
+encoding use `kapsel_http`: pass `encoding` in the query for GET `fs/read/text`,
+in the JSON body for POST `fs/read/many`, or on each item in POST
+`fs/write/mutate`. Typed file tools keep their default encoding. `kapsel_fs_write`
+uses `file.create` or exact-ETag `file.replace`; `kapsel_fs_replace` requires the
+exact `expected_etag` and an exact match count (default 1).
 
 Supported codecs include UTF-8/BOM, explicit-endian UTF-16, Big5, GBK/GB18030,
 Windows-1252, Latin-1, ASCII, and Shift-JIS. See the bundled files reference for
