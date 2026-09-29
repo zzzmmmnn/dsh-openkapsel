@@ -215,7 +215,11 @@ test('two agents mutate only their own remote workspace and never the local cwd'
         stderr: { data: '', next_offset: 0, available_end: 0, gap: false },
       });
     }
-    if ((endpoint === `task/interrupt/${rpcTaskId}` || endpoint === `task/kill/${rpcTaskId}`) && request.method === 'POST') {
+    if (endpoint === `task/interrupt/${rpcTaskId}` && request.method === 'POST') {
+      mappingBodies.push({ endpoint, body: JSON.parse((await requestBody(request)).toString('utf8')) });
+      return json(response, 200, { task_id: rpcTaskId, kind: 'rpc', status: 'running' });
+    }
+    if (endpoint === `task/${rpcTaskId}` && request.method === 'DELETE') {
       mappingBodies.push({ endpoint, body: JSON.parse((await requestBody(request)).toString('utf8')) });
       return json(response, 200, { task_id: rpcTaskId, kind: 'rpc', status: 'running' });
     }
@@ -626,17 +630,25 @@ test('two agents mutate only their own remote workspace and never the local cwd'
 
     sandboxModes.set('session-a', 'workspace-write');
 
-    for (const action of ['interrupt', 'kill']) {
-      await registered.get('kapsel_http').execute({
-        method: 'POST',
-        endpoint: 'task/' + action + '/' + rpcTaskId,
-        json: {},
-        plan_id: 1,
-        taskname: 'test',
-        message: action + ' rpc task',
-      }, { agent: agentA, signal });
-      assert.equal(mappingBodies.at(-1).endpoint, 'task/' + action + '/' + rpcTaskId);
-    }
+    await registered.get('kapsel_http').execute({
+      method: 'POST',
+      endpoint: 'task/interrupt/' + rpcTaskId,
+      json: {},
+      plan_id: 1,
+      taskname: 'test',
+      message: 'interrupt rpc task',
+    }, { agent: agentA, signal });
+    assert.equal(mappingBodies.at(-1).endpoint, 'task/interrupt/' + rpcTaskId);
+
+    await registered.get('kapsel_http').execute({
+      method: 'DELETE',
+      endpoint: 'task/' + rpcTaskId,
+      json: {},
+      plan_id: 1,
+      taskname: 'test',
+      message: 'kill rpc task',
+    }, { agent: agentA, signal });
+    assert.equal(mappingBodies.at(-1).endpoint, 'task/' + rpcTaskId);
 
     await registered.get('kapsel_fs_write').execute({
       path: 'from-a.txt', content: 'A', plan_id: 1, taskname: 'test', message: 'write A',
