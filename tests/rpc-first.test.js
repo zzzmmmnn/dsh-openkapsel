@@ -41,7 +41,7 @@ function fixture(t, config = {}, mode = 'workspace-write', response) {
         }
         const result = response ?? (call.endpoint === 'context' ? (call.method === 'GET' ? { entries: [{ id: 7, taskname: 'test' }] } : { id: 7 })
           : call.endpoint === '/' ? serverDiscovery
-          : call.endpoint === 'mappings' ? { mappings: [mapping] }
+          : call.endpoint === 'mapping' ? { mappings: [mapping] }
           : call.endpoint === 'fs/query/grep' ? partial : { task_id: 'task_test', location: 'server' });
         return { exitCode: 0, stdout: { text: JSON.stringify(result) } };
       },
@@ -138,9 +138,9 @@ test('failed or cancelled starts keep uncertain outcome visible and are never re
 
 test('RPC-only status and incomplete query metadata pass through without mounts', async t => {
   const f = fixture(t, {}, 'read-only');
-  assert.deepEqual(await f.tools.get('kapsel_mappings').execute({}, f.exec), { mappings: [mapping] });
+  assert.deepEqual(await f.tools.get('kapsel_mapping_list').execute({}, f.exec), { mappings: [mapping] });
   assert.deepEqual(await f.tools.get('kapsel_fs_grep').execute({ query: 'needle', path: '.' }, f.exec), partial);
-  assert.deepEqual(f.calls.map(c => c.endpoint), ['mappings', 'fs/query/grep']);
+  assert.deepEqual(f.calls.map(c => c.endpoint), ['mapping', 'fs/query/grep']);
   assert.ok(f.calls.every(c => c.method === 'GET' && !c.plan));
 });
 
@@ -189,8 +189,8 @@ test('mapping RPC prefers the short mapping name and remains read-only', async t
     mapping_id: mapping.name, family: 'git', operation: 'status', args: { cwd: '.' },
   }, f.exec);
   assert.deepEqual(f.calls.map(c => [c.method, c.endpoint]), [
-    ['GET', 'mappings'],
-    ['POST', 'mappings/laptop/rpc/git/status'],
+    ['GET', 'mapping'],
+    ['POST', 'mapping/laptop/rpc/git/status'],
   ]);
   assert.equal(f.calls.at(-1).plan, undefined);
 });

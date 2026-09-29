@@ -115,7 +115,7 @@ test('two agents mutate only their own remote workspace and never the local cwd'
         size: 4096,
       });
     }
-    if (request.method === 'GET' && endpoint === 'mappings') {
+    if (request.method === 'GET' && endpoint === 'mapping') {
       return json(response, 200, { mappings: [{
         id: mappingId, name: 'laptop', online: true, writable: true,
         capabilities: { rpc: { vendor: {
@@ -155,9 +155,9 @@ test('two agents mutate only their own remote workspace and never the local cwd'
       }] });
     }
     if (request.method === 'POST' && (
-      endpoint === `mappings/${mappingId}/rpc/vendor/inspect`
-      || endpoint === `mappings/${mappingId}/rpc/vendor/update`
-      || endpoint === `mappings/${mappingId}/rpc/vendor/task_update`
+      endpoint === `mapping/${mappingId}/rpc/vendor/inspect`
+      || endpoint === `mapping/${mappingId}/rpc/vendor/update`
+      || endpoint === `mapping/${mappingId}/rpc/vendor/task_update`
     )) {
       const body = JSON.parse((await requestBody(request)).toString('utf8'));
       mappingBodies.push({ endpoint, body });
@@ -183,10 +183,10 @@ test('two agents mutate only their own remote workspace and never the local cwd'
       mappingBodies.push({ endpoint, body: JSON.parse((await requestBody(request)).toString('utf8')) });
       return json(response, 202, { id: transferId, state: 'running' });
     }
-    if (endpoint === `fs/transfers/${transferId}` && request.method === 'GET') {
+    if (endpoint === `fs/transfer/${transferId}` && request.method === 'GET') {
       return json(response, 200, { id: transferId, state: 'running' });
     }
-    if (endpoint.startsWith(`fs/transfers/${transferId}/`) && request.method === 'POST') {
+    if (endpoint.startsWith(`fs/transfer/${transferId}/`) && request.method === 'POST') {
       mappingBodies.push({ endpoint, body: JSON.parse((await requestBody(request)).toString('utf8')) });
       return json(response, 200, { id: transferId, state: 'cancelled' });
     }
@@ -383,7 +383,7 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     assert.match(statRendered[0].text, /"type": "directory"/);
     assert.match(statRendered[0].text, /"size": 4096/);
 
-    const mappings = await registered.get('kapsel_mappings').execute({}, { agent: agentA, signal });
+    const mappings = await registered.get('kapsel_mapping_list').execute({}, { agent: agentA, signal });
     assert.equal(mappings.mappings[0].name, 'laptop');
     assert.equal(mappings.mappings[0].capabilities.rpc.vendor.description, 'Inspect or update vendor metadata.');
     assert.equal(
@@ -410,11 +410,11 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     await registered.get('kapsel_transfer').execute({
       transfer_id: transferId, action: 'cancel', ...operation,
     }, { agent: agentA, signal });
-    assert.equal(mappingBodies.at(-1).endpoint, `fs/transfers/${transferId}/cancel`);
+    assert.equal(mappingBodies.at(-1).endpoint, `fs/transfer/${transferId}/cancel`);
     await registered.get('kapsel_transfer').execute({
       transfer_id: transferId, action: 'resume', ...operation,
     }, { agent: agentA, signal });
-    assert.equal(mappingBodies.at(-1).endpoint, `fs/transfers/${transferId}/resume`);
+    assert.equal(mappingBodies.at(-1).endpoint, `fs/transfer/${transferId}/resume`);
 
     assert.equal((await registered.get('kapsel_recycle').execute({
       action: 'list', root: 'laptop',
@@ -469,7 +469,7 @@ test('two agents mutate only their own remote workspace and never the local cwd'
       ['kapsel_http', { method: 'POST', endpoint: 'fs/read/files', json: { paths: ['a'] } }],
       ['kapsel_http', { method: 'POST', endpoint: 'fs/query/manifest', json: { items: [{ path: 'a' }] } }],
       ['kapsel_rpc', { mapping_id: mappingId, family: 'vendor', operation: 'inspect', args: { value: 7 } }],
-      ['kapsel_http', { method: 'POST', endpoint: `mappings/${mappingId}/rpc/vendor/inspect`, json: { args: { value: 8 } } }],
+      ['kapsel_http', { method: 'POST', endpoint: `mapping/${mappingId}/rpc/vendor/inspect`, json: { args: { value: 8 } } }],
     ]) await registered.get(name).execute(args, { agent: agentA, signal });
     const filtered = await registered.get('kapsel_fs_grep').execute({ query: 'hello', include: ['*.py', '*.js'] }, { agent: agentA, signal });
     assert.deepEqual(filtered.query.filter(([key]) => key === 'include').map(([, value]) => value), ['*.py', '*.js']);
@@ -483,7 +483,7 @@ test('two agents mutate only their own remote workspace and never the local cwd'
       await assert.rejects(registered.get(toolName).execute(args, { agent: agentA, signal }), /read-only mode/);
     }
     assert.equal(requestLog.length, requestsBeforeDeniedMapping);
-    assert.equal((await registered.get('kapsel_mappings').execute({}, { agent: agentA, signal })).mappings.length, 1);
+    assert.equal((await registered.get('kapsel_mapping_list').execute({}, { agent: agentA, signal })).mappings.length, 1);
     assert.equal((await registered.get('kapsel_transfer').execute({
       transfer_id: transferId, action: 'status',
     }, { agent: agentA, signal })).state, 'running');

@@ -58,7 +58,7 @@ export const REMOTE_TOOL_NAMES = Object.freeze([
   'kapsel_fs_stat',
   'kapsel_fs_write',
   'kapsel_fs_replace',
-  'kapsel_mappings',
+  'kapsel_mapping_list',
   'kapsel_rpc',
   'kapsel_fs_copy',
   'kapsel_fs_move',
@@ -301,9 +301,9 @@ export function apply(ctx, config = {}) {
   }
 
   async function mappingRpcOperation(mappingId, family, operation, exec) {
-    const listing = await http('GET', 'mappings', { exec, signal: exec.signal });
+    const listing = await http('GET', 'mapping', { exec, signal: exec.signal });
     const mapping = (listing?.mappings ?? []).find((item) => item?.name === mappingId || item?.id === mappingId);
-    if (!mapping) throw new Error('mapping RPC target is not visible in kapsel_mappings');
+    if (!mapping) throw new Error('mapping RPC target is not visible in kapsel_mapping_list');
     const capability = mapping.capabilities?.rpc?.[family];
     if (!capability || capability.state !== 'available') {
       throw new Error(`mapping RPC family is not available: ${family}`);
@@ -609,7 +609,7 @@ export function apply(ctx, config = {}) {
       output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
       async execute(args, exec) {
         const method = String(args.method).toUpperCase();
-        const mappingRpcMatch = /^\/?mappings\/([A-Za-z0-9][A-Za-z0-9_-]{0,63})\/rpc\/([a-z][a-z0-9_]{0,31})\/([a-z][a-z0-9_]{0,31})(?:\?|$)/.exec(args.endpoint);
+        const mappingRpcMatch = /^\/?mapping\/([A-Za-z0-9][A-Za-z0-9_-]{0,63})\/rpc\/([a-z][a-z0-9_]{0,31})\/([a-z][a-z0-9_]{0,31})(?:\?|$)/.exec(args.endpoint);
         const serverRpcMatch = /^\/?rpc\/([a-z][a-z0-9_]{0,31})\/([a-z][a-z0-9_]{0,31})(?:\?|$)/.exec(args.endpoint);
         let rpcWrite = false;
         let rpcMatched = false;
@@ -666,20 +666,20 @@ export function apply(ctx, config = {}) {
     }),
 
     defineTool({
-      name: 'kapsel_mappings',
-      description: 'List client-backed workspace directories and capabilities (GET /mappings). RPC families self-describe with family description plus per-operation description/input_schema; inspect this before kapsel_rpc.',
+      name: 'kapsel_mapping_list',
+      description: 'List client-backed workspace directories and capabilities (GET /mapping). RPC families self-describe with family description plus per-operation description/input_schema; inspect this before kapsel_rpc.',
       parameters: {},
       output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
       async execute(_args, exec) {
-        return http('GET', 'mappings', { exec, signal: exec.signal });
+        return http('GET', 'mapping', { exec, signal: exec.signal });
       },
     }),
 
     defineTool({
       name: 'kapsel_rpc',
-      description: 'Invoke one dynamic RPC operation on the server workspace or a client mapping. Omit mapping_id for server RPC; provide mapping_id for client RPC. Server-capable families/operations come from Discovery, while mapping operations use kapsel_mappings operation_specs. execution=sync returns directly; execution=task returns a task_id polled with kapsel_task_output. Never replay an uncertain write-task start. write=true requires DSH write approval plus OpenKapsel Plan/Context; mapped writes also require an administratively writable mapping. No server/mapping/FUSE fallback after the target is selected.',
+      description: 'Invoke one dynamic RPC operation on the server workspace or a client mapping. Omit mapping_id for server RPC; provide mapping_id for client RPC. Server-capable families/operations come from Discovery, while mapping operations use kapsel_mapping_list operation_specs. execution=sync returns directly; execution=task returns a task_id polled with kapsel_task_output. Never replay an uncertain write-task start. write=true requires DSH write approval plus OpenKapsel Plan/Context; mapped writes also require an administratively writable mapping. No server/mapping/FUSE fallback after the target is selected.',
       parameters: {
-        mapping_id: { type: 'string', description: 'Optional mapping name from kapsel_mappings; legacy IDs are accepted for compatibility. Omit to target the server workspace.' },
+        mapping_id: { type: 'string', description: 'Optional mapping name from kapsel_mapping_list; legacy IDs are accepted for compatibility. Omit to target the server workspace.' },
         family: { type: 'string', required: true, description: 'RPC plugin family advertised for the selected target.' },
         operation: { type: 'string', required: true, description: 'RPC plugin operation advertised for the selected target.' },
         args: { type: 'object', additionalProperties: true, description: 'Plugin-specific argument object matching the advertised contract.' },
@@ -694,7 +694,7 @@ export function apply(ctx, config = {}) {
         const { mapping, spec } = await rpcOperation(args.mapping_id, args.family, args.operation, exec);
         const targetPrefix = args.mapping_id === undefined
           ? 'rpc'
-          : `mappings/${encodeURIComponent(args.mapping_id)}/rpc`;
+          : `mapping/${encodeURIComponent(args.mapping_id)}/rpc`;
         const endpoint = `${targetPrefix}/${encodeURIComponent(args.family)}/${encodeURIComponent(args.operation)}`;
         if (spec.write) {
           if (mapping && mapping.writable !== true) throw new Error('mapping is read-only for this RPC write operation');
@@ -784,7 +784,7 @@ export function apply(ctx, config = {}) {
       },
       output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
       async execute(args, exec) {
-        const endpoint = `fs/transfers/${encodeURIComponent(args.transfer_id)}`;
+        const endpoint = `fs/transfer/${encodeURIComponent(args.transfer_id)}`;
         if (args.action === 'status') {
           validateEscalationArgs(args.sandbox_permissions, args.justification);
           if (args.sandbox_permissions !== undefined) throw new Error('status is read-only; omit sandbox_permissions');
@@ -1059,7 +1059,7 @@ export function apply(ctx, config = {}) {
     systemPrompt.section({
       name: 'kapsel',
       order: 195,
-      text: `OpenKapsel workspace access is available through the \`kapsel_*\` tools. When a user supplies an OpenKapsel workspace URL and control token, call \`kapsel_config\` once to initialize it, then operate the remote workspace through the typed tools or \`kapsel_http\`. Use \`kapsel_plan_update\` for Plan updates and completion; its typed debrief avoids ambiguous generic request fields. When runtime Discovery advertises atomic_subplans, create a parent and direct children in one kapsel_http POST context call using subplans and a stable request_id inside json; use the returned child IDs for later operations. The authoritative REST contract is the vendored \`${SKILL_NAME}\` skill — load it with the \`skill\` tool before nontrivial operations. For RPC, call \`kapsel_rpc\` without \`mapping_id\` to target the server workspace, or provide \`mapping_id\` to target a client mapping; server-capable families come from Discovery and mapping operation schemas come from \`kapsel_mappings\`. On RPC-first servers, online=true with mounted=false is normal: use file/RPC tools without mounting. Keep Shell target=auto unless server execution is intended; declare extra server native dependencies with mount_mappings, and FastAPI dependencies in api/mappings.json. Never automatically replay a Shell/RPC write after a timeout, cancellation, or lost response; inspect existing tasks and affected paths first. Check unavailable_mappings and truncated query results before claiming a search is complete. DSH \`read-only\` mode permits remote reads but denies remote writes, edits, Shell commands, and mutating HTTP methods. After such a denial, retry the exact call with \`sandbox_permissions: "workspace-write"\` and a one-sentence \`justification\` only when the mutation is necessary; approval applies to that call alone. DSH \`workspace-write\` and \`danger-full-access\` are equivalent for this bridge because the OpenKapsel token remains the remote authority boundary. Never print or commit the control token.`,
+      text: `OpenKapsel workspace access is available through the \`kapsel_*\` tools. When a user supplies an OpenKapsel workspace URL and control token, call \`kapsel_config\` once to initialize it, then operate the remote workspace through the typed tools or \`kapsel_http\`. Use \`kapsel_plan_update\` for Plan updates and completion; its typed debrief avoids ambiguous generic request fields. When runtime Discovery advertises atomic_subplans, create a parent and direct children in one kapsel_http POST context call using subplans and a stable request_id inside json; use the returned child IDs for later operations. The authoritative REST contract is the vendored \`${SKILL_NAME}\` skill — load it with the \`skill\` tool before nontrivial operations. For RPC, call \`kapsel_rpc\` without \`mapping_id\` to target the server workspace, or provide \`mapping_id\` to target a client mapping; server-capable families come from Discovery and mapping operation schemas come from \`kapsel_mapping_list\`. On RPC-first servers, online=true with mounted=false is normal: use file/RPC tools without mounting. Keep Shell target=auto unless server execution is intended; declare extra server native dependencies with mount_mappings, and FastAPI dependencies in api/mappings.json. Never automatically replay a Shell/RPC write after a timeout, cancellation, or lost response; inspect existing tasks and affected paths first. Check unavailable_mappings and truncated query results before claiming a search is complete. DSH \`read-only\` mode permits remote reads but denies remote writes, edits, Shell commands, and mutating HTTP methods. After such a denial, retry the exact call with \`sandbox_permissions: "workspace-write"\` and a one-sentence \`justification\` only when the mutation is necessary; approval applies to that call alone. DSH \`workspace-write\` and \`danger-full-access\` are equivalent for this bridge because the OpenKapsel token remains the remote authority boundary. Never print or commit the control token.`,
     });
   }
 
