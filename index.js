@@ -51,11 +51,10 @@ export const REMOTE_TOOL_NAMES = Object.freeze([
   'kapsel_status',
   'kapsel_plan_update',
   'kapsel_http',
-  'kapsel_fs_read_many',
+  'kapsel_fs_read_files',
   'kapsel_fs_manifest',
-  'kapsel_fs_search',
+  'kapsel_fs_grep',
   'kapsel_fs_list',
-  'kapsel_fs_read',
   'kapsel_fs_stat',
   'kapsel_fs_write',
   'kapsel_fs_replace',
@@ -272,7 +271,7 @@ export function apply(ctx, config = {}) {
       return parseJson(out);
     } catch (error) {
       if (!shellStart) throw error;
-      throw new Error(`${error?.message ?? error} A timeout, cancellation, or lost response does not confirm the remote task stopped. Inspect /tasks before retrying; never automatically replay the command.`);
+      throw new Error(`${error?.message ?? error} A timeout, cancellation, or lost response does not confirm the remote task stopped. Inspect /task/list or /task/get/<id> before retrying; never automatically replay the command.`);
     }
   }
 
@@ -303,7 +302,7 @@ export function apply(ctx, config = {}) {
 
   async function mappingRpcOperation(mappingId, family, operation, exec) {
     const listing = await http('GET', 'mappings', { exec, signal: exec.signal });
-    const mapping = (listing?.mappings ?? []).find((item) => item?.id === mappingId);
+    const mapping = (listing?.mappings ?? []).find((item) => item?.name === mappingId || item?.id === mappingId);
     if (!mapping) throw new Error('mapping RPC target is not visible in kapsel_mappings');
     const capability = mapping.capabilities?.rpc?.[family];
     if (!capability || capability.state !== 'available') {
@@ -337,7 +336,7 @@ export function apply(ctx, config = {}) {
 
   async function rpcOperation(mappingId, family, operation, exec) {
     if (mappingId !== undefined) {
-      if (typeof mappingId !== 'string' || !mappingId) throw new Error('mapping_id must be a non-empty mapping id when provided');
+      if (typeof mappingId !== 'string' || !mappingId) throw new Error('mapping_id must be a non-empty mapping name or legacy ID when provided');
       return mappingRpcOperation(mappingId, family, operation, exec);
     }
     return serverRpcOperation(family, operation, exec);
@@ -512,7 +511,19 @@ export function apply(ctx, config = {}) {
           additionalProperties: false,
           description: 'Required with status="completed" and invalid for other statuses.',
           properties: {
-            summary: { type: 'string', required: true, description: 'Concise completion summary.' },
+            items: {
+              type: 'array',
+              required: true,
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  content: { type: 'string', required: true, description: 'Durable Memory content, 1-256 characters.' },
+                  tags: { type: 'array', required: true, items: { type: 'string' }, description: 'Exact-match Memory tags; prefer 4-16.' },
+                },
+              },
+              description: 'Each item directly creates one long-lived Memory; use [] when no new durable fact exists.',
+            },
             outcome: {
               type: 'string',
               required: true,
@@ -522,7 +533,19 @@ export function apply(ctx, config = {}) {
               type: 'array',
               required: true,
               items: { type: 'object', additionalProperties: true },
-              description: 'Memory actions from the OpenKapsel Memory contract; use [] when none apply.',
+              description: 'Updates or archives for existing Memory; use [] when none apply.',
+            },
+            memory_feedback: {
+              type: 'array',
+              required: true,
+              items: { type: 'object', additionalProperties: true },
+              description: 'Existing Memory revisions that materially helped; use [] when none.',
+            },
+            memory_conflicts: {
+              type: 'array',
+              required: true,
+              items: { type: 'object', additionalProperties: true },
+              description: 'Verified conflicts handled by a matching update/archive action; use [] when none.',
             },
           },
         },
@@ -586,7 +609,7 @@ export function apply(ctx, config = {}) {
       output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
       async execute(args, exec) {
         const method = String(args.method).toUpperCase();
-        const mappingRpcMatch = /^\/?mappings\/([A-Za-z0-9_-]{24})\/rpc\/([a-z][a-z0-9_]{0,31})\/([a-z][a-z0-9_]{0,31})(?:\?|$)/.exec(args.endpoint);
+        const mappingRpcMatch = /^\/?mappings\/([A-Za-z0-9][A-Za-z0-9_-]{0,63})\/rpc\/([a-z][a-z0-9_]{0,31})\/([a-z][a-z0-9_]{0,31})(?:\?|$)/.exec(args.endpoint);
         const serverRpcMatch = /^\/?rpc\/([a-z][a-z0-9_]{0,31})\/([a-z][a-z0-9_]{0,31})(?:\?|$)/.exec(args.endpoint);
         let rpcWrite = false;
         let rpcMatched = false;
@@ -603,7 +626,7 @@ export function apply(ctx, config = {}) {
           rpcWrite = spec.write;
         }
         const readPost = method === 'POST' && (
-          /^\/?fs\/(?:read\/many|query\/manifest)(?:\?|$)/.test(args.endpoint)
+          /^\/?fs\/(?:read\/files|query\/manifest)(?:\?|$)/.test(args.endpoint)
           || (rpcMatched && !rpcWrite)
         );
         const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !readPost;
@@ -656,7 +679,7 @@ export function apply(ctx, config = {}) {
       name: 'kapsel_rpc',
       description: 'Invoke one dynamic RPC operation on the server workspace or a client mapping. Omit mapping_id for server RPC; provide mapping_id for client RPC. Server-capable families/operations come from Discovery, while mapping operations use kapsel_mappings operation_specs. execution=sync returns directly; execution=task returns a task_id polled with kapsel_task_output. Never replay an uncertain write-task start. write=true requires DSH write approval plus OpenKapsel Plan/Context; mapped writes also require an administratively writable mapping. No server/mapping/FUSE fallback after the target is selected.',
       parameters: {
-        mapping_id: { type: 'string', description: 'Optional mapping id from kapsel_mappings. Omit to target the server workspace.' },
+        mapping_id: { type: 'string', description: 'Optional mapping name from kapsel_mappings; legacy IDs are accepted for compatibility. Omit to target the server workspace.' },
         family: { type: 'string', required: true, description: 'RPC plugin family advertised for the selected target.' },
         operation: { type: 'string', required: true, description: 'RPC plugin operation advertised for the selected target.' },
         args: { type: 'object', additionalProperties: true, description: 'Plugin-specific argument object matching the advertised contract.' },
@@ -814,17 +837,18 @@ export function apply(ctx, config = {}) {
     }),
 
     ...[
-      ['kapsel_fs_read_many', 'Read multiple UTF-8 files without mutation authorization or Plan creation.', {
-        paths: { type: 'array', items: { type: 'string' }, required: true }, limit: { type: 'integer' }, max_total_chars: { type: 'integer' },
-      }, 'POST', 'fs/read/many'],
+      ['kapsel_fs_read_files', 'Read one or more text files with per-file status; a one-item paths array is the single-file form.', {
+        paths: { type: 'array', items: { type: 'string' }, required: true },
+        offset: { type: 'integer' }, limit: { type: 'integer' }, max_total_chars: { type: 'integer' }, encoding: { type: 'string' },
+      }, 'POST', 'fs/read/files'],
       ['kapsel_fs_manifest', 'Read batch metadata or recursive manifest; optional SHA256. Read-only.', {
         items: { type: 'array', items: { type: 'object', properties: { path: { type: 'string', required: true }, size: { type: 'integer' }, sha256: { type: 'string' } }, additionalProperties: false } },
         recursive: { type: 'boolean' }, path: { type: 'string' }, depth: { type: 'integer' }, include_sha256: { type: 'boolean' },
       }, 'POST', 'fs/query/manifest'],
-      ['kapsel_fs_search', 'Search UTF-8 files, with repeated include/exclude glob filters.', {
+      ['kapsel_fs_grep', 'Grep UTF-8 file contents, with repeated include/exclude glob filters.', {
         path: { type: 'string' }, query: { type: 'string', required: true }, regex: { type: 'boolean' }, case_sensitive: { type: 'boolean' },
         depth: { type: 'integer' }, max_results: { type: 'integer' }, include: { type: 'array', items: { type: 'string' } }, exclude: { type: 'array', items: { type: 'string' } },
-      }, 'GET', 'fs/query/search'],
+      }, 'GET', 'fs/query/grep'],
     ].map(([name, description, parameters, method, endpoint]) => defineTool({
       name, description, parameters,
       output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
@@ -845,31 +869,6 @@ export function apply(ctx, config = {}) {
       async execute(args, exec) {
         return http('GET', 'fs/query/list', {
           query: { path: args.path ?? '.', offset: args.offset, limit: args.limit },
-          exec,
-          signal: exec.signal,
-        });
-      },
-    }),
-
-    defineTool({
-      name: 'kapsel_fs_read',
-      description: 'Read a UTF-8 text file from the workspace (GET /fs/read/text).',
-      parameters: {
-        path: { type: 'string', required: true, description: 'Workspace-relative file path.' },
-        offset: { type: 'integer', description: 'Character offset to skip before reading.' },
-        byte_offset: { type: 'integer', description: 'Byte offset (preferred over offset).' },
-        limit: { type: 'integer', description: 'Maximum characters/bytes to return.' },
-      },
-      output: {
-        schema: { type: 'object', additionalProperties: true },
-        render: (_args, value) => [{
-          type: 'text',
-          text: typeof value?.content === 'string' ? value.content : valueText(value),
-        }],
-      },
-      async execute(args, exec) {
-        return http('GET', 'fs/read/text', {
-          query: { path: args.path, offset: args.offset, byte_offset: args.byte_offset, limit: args.limit },
           exec,
           signal: exec.signal,
         });
@@ -1019,7 +1018,7 @@ export function apply(ctx, config = {}) {
     defineTool({
       name: 'kapsel_task_output',
       description:
-        'Poll incremental Shell output (GET /tasks/<id>/output). Server tasks have separate stdout/stderr; client tasks combine both in stdout and return empty stderr. Advance the returned next_offset cursors; use wait_seconds for long polling.',
+        'Poll incremental Shell output (GET /task/output/<id>). Server tasks have separate stdout/stderr; client tasks combine both in stdout and return empty stderr. Advance the returned next_offset cursors; use wait_seconds for long polling.',
       parameters: {
         task_id: { type: 'string', required: true, description: 'Task id returned by kapsel_shell_exec.' },
         stdout_offset: { type: 'integer', description: 'Byte cursor for stdout. Defaults to 0.' },
@@ -1029,7 +1028,7 @@ export function apply(ctx, config = {}) {
       },
       output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
       async execute(args, exec) {
-        return http('GET', `tasks/${encodeURIComponent(args.task_id)}/output`, {
+        return http('GET', `task/output/${encodeURIComponent(args.task_id)}`, {
           query: {
             stdout_offset: args.stdout_offset ?? 0,
             stderr_offset: args.stderr_offset ?? 0,

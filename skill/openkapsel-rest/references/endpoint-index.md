@@ -10,19 +10,19 @@ This inventory is for routing. Read the focused reference and runtime Discovery 
 | `GET` | `<workspace_url>/discovery/{files,context,memory,shell,schedules,web,sharing,full}` |
 | `POST` | `<workspace_url>/credentials/renew` |
 | `GET` | `<workspace_url>/fs/query/list` |
-| `GET` | `<workspace_url>/fs/read/text` |
 | `GET` | `<workspace_url>/fs/query/stat` |
 | `POST` | `<workspace_url>/fs/query/manifest` |
-| `POST` | `<workspace_url>/fs/read/many` |
+| `POST` | `<workspace_url>/fs/read/files` |
 | `POST` | `<workspace_url>/rpc/git/<operation>` |
 | `POST` | `<workspace_url>/rpc/archive/<operation>` |
-| `POST` | `<workspace_url>/mappings/<mapping_id>/rpc/<family>/<operation>` |
-| `GET` | `<workspace_url>/fs/query/search` |
+| `POST` | `<workspace_url>/mappings/<mapping_name>/rpc/<family>/<operation>` |
+| `GET` | `<workspace_url>/fs/query/find` |
+| `GET` | `<workspace_url>/fs/query/grep` |
 | `GET` | `<workspace_url>/fs/query/tree` |
 | `GET|HEAD|PUT` | `<workspace_url>/fs/content` |
 | `POST` | `<workspace_url>/fs/write/mutate` |
 | `POST` | `<workspace_url>/fs/read/large` |
-| `POST` | `<workspace_url>/fs/write/large` |
+| `POST` | `<workspace_url>/fs/write/replace_large` |
 | `POST` | `<workspace_url>/fs/write/mkdir` |
 | `POST` | `<workspace_url>/fs/write/move` |
 | `GET` | `<workspace_url>/recycle/list` |
@@ -32,12 +32,16 @@ This inventory is for routing. Read the focused reference and runtime Discovery 
 
 | Method | Route |
 |---|---|
-| `POST` | `<workspace_url>/uploads` |
-| `GET|HEAD|PATCH|DELETE` | `<workspace_url>/uploads/<upload_id>` |
-| `POST` | `<workspace_url>/uploads/<upload_id>/commit` |
+| `POST` | `<workspace_url>/upload/create` |
+| `GET|HEAD` | `<workspace_url>/upload/status/<upload_id>` |
+| `PATCH` | `<workspace_url>/upload/chunk/<upload_id>` |
+| `DELETE` | `<workspace_url>/upload/cancel/<upload_id>` |
+| `POST` | `<workspace_url>/upload/commit/<upload_id>` |
 | `GET|HEAD|PUT` | `<service-base>/transfer/fs/content` |
-| `GET|HEAD|PATCH|DELETE` | `<service-base>/transfer/uploads/<upload_id>` |
-| `POST` | `<service-base>/transfer/uploads/<upload_id>/commit` |
+| `GET|HEAD` | `<service-base>/transfer/upload/status/<upload_id>` |
+| `PATCH` | `<service-base>/transfer/upload/chunk/<upload_id>` |
+| `DELETE` | `<service-base>/transfer/upload/cancel/<upload_id>` |
+| `POST` | `<service-base>/transfer/upload/commit/<upload_id>` |
 
 ## Context and Memory
 
@@ -58,13 +62,13 @@ This inventory is for routing. Read the focused reference and runtime Discovery 
 |---|---|
 | `GET|PUT|DELETE` | `<workspace_url>/env` |
 | `POST` | `<workspace_url>/shell/exec` |
-| `GET` | `<workspace_url>/tasks` |
-| `GET` | `<workspace_url>/tasks/<task_id>` |
-| `GET` | `<workspace_url>/tasks/<task_id>/output` |
-| `GET` | `<workspace_url>/tasks/<task_id>/stream` |
-| `POST` | `<workspace_url>/tasks/<task_id>/stdin` |
-| `POST` | `<workspace_url>/tasks/<task_id>/interrupt` |
-| `POST` | `<workspace_url>/tasks/<task_id>/kill` |
+| `GET` | `<workspace_url>/task/list` |
+| `GET` | `<workspace_url>/task/get/<task_id>` |
+| `GET` | `<workspace_url>/task/output/<task_id>` |
+| `GET` | `<workspace_url>/task/stream/<task_id>` |
+| `POST` | `<workspace_url>/task/stdin/<task_id>` |
+| `POST` | `<workspace_url>/task/interrupt/<task_id>` |
+| `POST` | `<workspace_url>/task/kill/<task_id>` |
 | `GET` | `<workspace_url>/sandbox/processes` |
 
 Server `POST /shell/exec` accepts optional `mount_mappings` for extra native
@@ -88,10 +92,10 @@ routing, and client execution rejects non-empty declarations. See
 
 | Method | Route |
 |---|---|
-| `POST` | `<workspace_url>/shares` |
-| `GET` | `<service-base>/shares/<share_id>` |
-| `POST` | `<workspace_url>/shares/<share_id>/import` |
-| `DELETE` | `<workspace_url>/shares/<share_id>` |
+| `POST` | `<workspace_url>/share/create` |
+| `GET` | `<service-base>/share/query/<share_id>` |
+| `POST` | `<workspace_url>/share/import/<share_id>` |
+| `DELETE` | `<workspace_url>/share/delete/<share_id>` |
 | `GET|HEAD` | `<preview-base>/<workspace-relative-path>` |
 | `GET|HEAD|POST|PUT|PATCH|DELETE` | `<preview-base>/<app-path>/api/<route>` |
 
@@ -112,11 +116,11 @@ There is intentionally no MCP route in this skill.
 - `GET /mappings`: mapped roots, `online`, `mounted`, `mount_references`,
   `native_mounts_enabled`, execution/RPC and `file_stream` capabilities. Online
   and unmounted is normal; file endpoints never start native mounts.
-- `POST /rpc/<family>/<operation>`: invoke one RPC operation on the server workspace for an explicitly registered server family. Inspect Discovery/operation metadata for `write` and `execution`; `sync` returns directly and `task` returns HTTP 202 plus a normal server task id. `write=false` requires read permission; `write=true` requires control/write permission plus `plan_id`/`taskname`/`message`. Server task operations use the ordinary `/tasks` lifecycle. There is no fallback to a mapping after the server target is selected.
-- `POST /mappings/<mapping_id>/rpc/<family>/<operation>`: invoke one advertised client RPC operation. Inspect `operation_specs.<operation>.write` and `execution`. `sync` returns directly; `task` returns HTTP 202 + a unified client task id and may take optional `timeout_seconds`. Writes require control/write permission, an administratively writable mapping, and `plan_id`/`taskname`/`message`. Task starts survive provider reconnects while the client process lives; do not replay an uncertain write-task start. If a start returns `409 client_task_capacity_reached`, collect completed client task results by reading output through each final offset before retrying; listing alone does not release retained results. No server/FUSE fallback.
+- `POST /rpc/<family>/<operation>`: invoke one RPC operation on the server workspace for an explicitly registered server family. Inspect Discovery/operation metadata for `write` and `execution`; `sync` returns directly and `task` returns HTTP 202 plus a normal server task id. `write=false` requires read permission; `write=true` requires control/write permission plus `plan_id`/`taskname`/`message`. Server task operations use the ordinary `/task/*` lifecycle. There is no fallback to a mapping after the server target is selected.
+- `POST /mappings/<mapping_name>/rpc/<family>/<operation>`: invoke one advertised client RPC operation. Resolve the name from `GET /mappings`; legacy mapping IDs remain accepted for compatibility. Inspect `operation_specs.<operation>.write` and `execution`. `sync` returns directly; `task` returns HTTP 202 + a unified client task id and may take optional `timeout_seconds`. Writes require control/write permission, an administratively writable mapping, and `plan_id`/`taskname`/`message`. Task starts survive provider reconnects while the client process lives; do not replay an uncertain write-task start. If a start returns `409 client_task_capacity_reached`, collect completed client task results by reading output through each final offset before retrying; listing alone does not release retained results. No server/FUSE fallback.
 - `POST /rpc/archive/list`: browse a server-side ZIP/tar archive without extracting.
 - `POST /rpc/archive/read`: read a bounded server-side archive member preview.
-- For mapped archives use `/mappings/<mapping_id>/rpc/archive/<operation>`.
+- For mapped archives use `/mappings/<mapping_name>/rpc/archive/<operation>`.
 - `POST /fs/write/copy`: start an asynchronous copy.
 - `GET /fs/transfers/<id>`: inspect transfer progress.
 - `POST /fs/transfers/<id>/cancel` and `/resume`: control transfers.

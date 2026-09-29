@@ -86,7 +86,7 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     const [, workspace, endpointWithQuery] = match;
     const endpoint = endpointWithQuery.split('?', 1)[0];
     requestLog.push({ workspace, method: request.method, endpoint });
-    if (['fs/read/many', 'fs/query/manifest', 'fs/query/search'].includes(endpoint)) {
+    if (['fs/read/files', 'fs/query/manifest', 'fs/query/grep'].includes(endpoint)) {
       const data = request.method === 'POST' ? JSON.parse((await requestBody(request)).toString('utf8')) : null;
       return json(response, 200, { items: [], endpoint, query: [...new URL(request.url, 'http://localhost').searchParams], body: data });
     }
@@ -201,13 +201,13 @@ test('two agents mutate only their own remote workspace and never the local cwd'
       mappingBodies.push({ endpoint, body: JSON.parse((await requestBody(request)).toString('utf8')) });
       return json(response, 202, { task_id: 'client.' + mappingId + '.' + clientTaskId, location: 'client' });
     }
-    if (endpoint === `tasks/${rpcTaskId}` && request.method === 'GET') {
+    if (endpoint === `task/get/${rpcTaskId}` && request.method === 'GET') {
       return json(response, 200, {
         task_id: rpcTaskId, kind: 'rpc', rpc_family: 'vendor', rpc_operation: 'task_update',
         execution: 'task', write: true, status: 'running', running: true,
       });
     }
-    if (endpoint === `tasks/${rpcTaskId}/output` && request.method === 'GET') {
+    if (endpoint === `task/output/${rpcTaskId}` && request.method === 'GET') {
       return json(response, 200, {
         task_id: rpcTaskId, kind: 'rpc', rpc_family: 'vendor', rpc_operation: 'task_update',
         execution: 'task', status: 'running', finished: false,
@@ -215,7 +215,7 @@ test('two agents mutate only their own remote workspace and never the local cwd'
         stderr: { data: '', next_offset: 0, available_end: 0, gap: false },
       });
     }
-    if ((endpoint === `tasks/${rpcTaskId}/interrupt` || endpoint === `tasks/${rpcTaskId}/kill`) && request.method === 'POST') {
+    if ((endpoint === `task/interrupt/${rpcTaskId}` || endpoint === `task/kill/${rpcTaskId}`) && request.method === 'POST') {
       mappingBodies.push({ endpoint, body: JSON.parse((await requestBody(request)).toString('utf8')) });
       return json(response, 200, { task_id: rpcTaskId, kind: 'rpc', status: 'running' });
     }
@@ -352,7 +352,7 @@ test('two agents mutate only their own remote workspace and never the local cwd'
       endpoint: 'context/plans/1',
       json: {
         status: 'completed',
-        debrief: { summary: 'Completed the demo.', outcome: 'succeeded', memory_actions: [] },
+        debrief: { items: [], outcome: 'succeeded', memory_actions: [], memory_feedback: [], memory_conflicts: [] },
       },
       taskname: 'macos-web',
       message: 'complete demo',
@@ -360,7 +360,7 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     assert.deepEqual(contextPatchBodies[0], {
       taskname: 'macos-web',
       status: 'completed',
-      debrief: { summary: 'Completed the demo.', outcome: 'succeeded', memory_actions: [] },
+      debrief: { items: [], outcome: 'succeeded', memory_actions: [], memory_feedback: [], memory_conflicts: [] },
     });
 
     await registered.get('kapsel_plan_update').execute({
@@ -464,14 +464,14 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     sandboxModes.set('session-a', 'read-only');
     const readStart = requestLog.length;
     for (const [name, args] of [
-      ['kapsel_fs_read_many', { paths: ['a', 'b'] }],
+      ['kapsel_fs_read_files', { paths: ['a', 'b'] }],
       ['kapsel_fs_manifest', { recursive: true, path: '.' }],
-      ['kapsel_http', { method: 'POST', endpoint: 'fs/read/many', json: { paths: ['a'] } }],
+      ['kapsel_http', { method: 'POST', endpoint: 'fs/read/files', json: { paths: ['a'] } }],
       ['kapsel_http', { method: 'POST', endpoint: 'fs/query/manifest', json: { items: [{ path: 'a' }] } }],
       ['kapsel_rpc', { mapping_id: mappingId, family: 'vendor', operation: 'inspect', args: { value: 7 } }],
       ['kapsel_http', { method: 'POST', endpoint: `mappings/${mappingId}/rpc/vendor/inspect`, json: { args: { value: 8 } } }],
     ]) await registered.get(name).execute(args, { agent: agentA, signal });
-    const filtered = await registered.get('kapsel_fs_search').execute({ query: 'hello', include: ['*.py', '*.js'] }, { agent: agentA, signal });
+    const filtered = await registered.get('kapsel_fs_grep').execute({ query: 'hello', include: ['*.py', '*.js'] }, { agent: agentA, signal });
     assert.deepEqual(filtered.query.filter(([key]) => key === 'include').map(([, value]) => value), ['*.py', '*.js']);
     assert.equal(requestLog.slice(readStart).some(item => item.endpoint === 'context'), false);
     const requestsBeforeDeniedMapping = requestLog.length;
@@ -594,11 +594,11 @@ test('two agents mutate only their own remote workspace and never the local cwd'
 
     const rpcStatus = (await registered.get('kapsel_http').execute({
       method: 'GET',
-      endpoint: 'tasks/' + rpcTaskId,
+      endpoint: 'task/get/' + rpcTaskId,
     }, { agent: agentA, signal })).body;
     assert.equal(rpcStatus.kind, 'rpc');
     assert.equal(rpcStatus.rpc_operation, 'task_update');
-    assert.equal(requestLog.at(-1).endpoint, 'tasks/' + rpcTaskId);
+    assert.equal(requestLog.at(-1).endpoint, 'task/get/' + rpcTaskId);
 
     const rpcOutput = await registered.get('kapsel_task_output').execute({
       task_id: rpcTaskId,
@@ -606,7 +606,7 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     }, { agent: agentA, signal });
     assert.equal(rpcOutput.kind, 'rpc');
     assert.equal(rpcOutput.stdout.data, 'progress\n');
-    assert.equal(requestLog.at(-1).endpoint, `tasks/${rpcTaskId}/output`);
+    assert.equal(requestLog.at(-1).endpoint, `task/output/${rpcTaskId}`);
 
     await registered.get('kapsel_fs_write').execute({
       path: 'approved.txt',
@@ -629,13 +629,13 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     for (const action of ['interrupt', 'kill']) {
       await registered.get('kapsel_http').execute({
         method: 'POST',
-        endpoint: 'tasks/' + rpcTaskId + '/' + action,
+        endpoint: 'task/' + action + '/' + rpcTaskId,
         json: {},
         plan_id: 1,
         taskname: 'test',
         message: action + ' rpc task',
       }, { agent: agentA, signal });
-      assert.equal(mappingBodies.at(-1).endpoint, 'tasks/' + rpcTaskId + '/' + action);
+      assert.equal(mappingBodies.at(-1).endpoint, 'task/' + action + '/' + rpcTaskId);
     }
 
     await registered.get('kapsel_fs_write').execute({

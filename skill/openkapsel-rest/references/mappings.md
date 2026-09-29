@@ -1,8 +1,10 @@
 # Client-backed directories and execution
 
 Fetch `GET /mappings` before using client-backed paths. It returns each mapping's
-`id`, workspace-relative `path`, `online`, `writable`, `mounted`,
-`mount_references`, `native_mounts_enabled`, and advertised client capabilities.
+human-readable `name`, stable `id`, workspace-relative `path`, `online`,
+`writable`, `mounted`, `mount_references`, `native_mounts_enabled`, and
+advertised client capabilities. Use `name` when addressing mapping RPCs; the
+stable ID is retained for compatibility and internal identities.
 Files live on the client, not inside the server workspace image. On OpenKapsel
 1.61.0+ RPC-first servers, `online=true` with `mounted=false` is normal: use file
 and RPC endpoints without starting a native mount. Registration, provider
@@ -10,9 +12,10 @@ connection, and native filesystem view have independent lifetimes. Offline
 operations fail; never recreate a mapping root or treat it as an empty local
 directory. Runtime Discovery remains authoritative for older servers.
 
-Clients advertise a generic `capabilities.rpc` map. Optional extensions report
-`available`, `unsupported`, or `disabled`; the server derives `offline` from
-provider connectivity. Core file RPC uses version 4 on current clients and is always enabled.
+Clients advertise a generic `capabilities.rpc` map containing only enabled,
+runtime-supported plugin families; absent plugin families are not callable. The server
+derives `offline` from provider connectivity. Core file RPC uses version 4 on current
+clients and is always enabled.
 Version 3 remains sufficient for the older codec-aware text operations; version 4 adds
 single-request transactional mutation and guarded large-file range operations. **rpc.file has been removed**; delete that key from older client
 configurations rather than setting it to true or false. Permissions and operation
@@ -59,10 +62,12 @@ clients should inspect this metadata instead of hard-coding future families such
 as doc/csv/sqlite. A family-level `read_only` value may be present for
 rolling-upgrade compatibility, but operation metadata is authoritative.
 
-Use `POST /mappings/<mapping_id>/rpc/<family>/<operation>`. A `sync`
+Use `POST /mappings/<mapping_name>/rpc/<family>/<operation>`. Resolve
+`mapping_name` from `GET /mappings`; legacy mapping IDs are still accepted by the
+server for compatibility, but new calls should use the name. A `sync`
 operation returns its result directly. A `task` operation returns HTTP 202 and
 a unified `client.<mapping>.<task>` id immediately; query it through the
-ordinary `/tasks/<id>` and `/tasks/<id>/output` routes and use ordinary
+ordinary `/task/get/<id>` and `/task/output/<id>` routes and use ordinary
 interrupt/kill task controls. RPC tasks live in the client runtime, continue
 across provider WebSocket disconnect/reconnect while that client process stays
 alive, and retain bounded output/results. Do not automatically replay an
@@ -77,7 +82,7 @@ also include `timeout_seconds`; the client enforces its local `max_seconds`
 policy (600 seconds by default). The server forwards exactly one start RPC and
 never falls back to server/FUSE for a generic plugin operation.
 
-Archive preview uses the generic `archive` RPC family. Call `POST /rpc/archive/list` or `POST /rpc/archive/read` for the server workspace, and `POST /mappings/<mapping_id>/rpc/archive/<operation>` for mapped archives. Put archive-specific parameters under `args`. Preview never extracts members to disk, refuses link members as files, bounds listing/member reads, and supports the Python runtime's standard-library ZIP/tar formats such as `.zip`, `.tar`, `.tar.gz`/`.tgz`, `.tar.bz2`/`.tbz2`, `.tar.xz`/`.txz`, and where available `.tar.zst`/`.tzst`.
+Archive preview uses the generic `archive` RPC family. Call `POST /rpc/archive/list` or `POST /rpc/archive/read` for the server workspace, and `POST /mappings/<mapping_name>/rpc/archive/<operation>` for mapped archives. Put archive-specific parameters under `args`. Preview never extracts members to disk, refuses link members as files, bounds listing/member reads, and supports the Python runtime's standard-library ZIP/tar formats such as `.zip`, `.tar`, `.tar.gz`/`.tgz`, `.tar.bz2`/`.tbz2`, `.tar.xz`/`.txz`, and where available `.tar.zst`/`.tzst`.
 
 `GET /recycle/list?root=.` selects the ordinary workspace recycle bin. Use `root=<mapping-name>` for that client's recycle bin. `POST /recycle/restore` accepts the same `root` and `recycle_id`, plus normal mutation Context. Never infer a recycle root from the ID alone.
 
@@ -113,7 +118,7 @@ deep row-offset scans. Inspect `details.formats` for optional parser dependencie
 See [data-rpc.md](data-rpc.md) for argument examples, budgets and failure handling.
 
 RPC task listings are summaries: completed tasks advertise `result_available`
-without duplicating large result objects. Fetch `/tasks/<id>` or its output
+without duplicating large result objects. Fetch `/task/get/<id>` or its output
 endpoint for the result. This keeps a list of several table scans within the
 transport response limit.
 
@@ -126,7 +131,7 @@ transport response limit.
 - `completed` is success. `copied_source_retained` means a move copied the destination but could not safely recycle the source. Do not delete the source blindly.
 - Partial data is staged on the destination storage, not buffered as an entire file on the server. Cancel preserves partial data for resumption.
 
-Binary downloads/uploads, static preview, shares and cross-root transfers use
+Binary downloads/upload/create, static preview, shares and cross-root transfers use
 RPC without FUSE. Transfer staging is on the destination filesystem. Resumable
 uploads retain a bounded server spool until publication; shares remain immutable
 server-owned snapshots and consume share quota. In-progress handles are provider-
@@ -142,16 +147,16 @@ Client execution is separate from server Shell. Only use it when requested or ap
 Use the unified `POST /shell/exec` with `target=auto` and a workspace-relative
 mapped `cwd` (see [shell.md](shell.md#start-and-inspect-tasks)). A mapped cwd
 routes execution to that mapping's client; `target=client` can require this
-explicitly. Use the returned unified client task ID with ordinary `/tasks`
+explicitly. Use the returned unified client task ID with ordinary `/task/*`
 status, output, stream, stdin, interrupt, and kill endpoints. Mapping-specific
-`/mappings/<mapping_id>/tasks*` REST endpoints are not exposed.
+Mapping-specific task lifecycle routes are not exposed.
 
 Shell/client-execution tasks require the control credential and enabled Shell
 permission. Starting a Shell task additionally requires write permission, a
 writable execution-enabled mapping, and client-local execution opt-in. RPC tasks
 are separate: they do not require Shell or `allow_exec`; access follows the
 selected operation's read/write metadata and mapping writable policy. Both task
-kinds use the same client task store and unified `/tasks` query/output/control
+kinds use the same client task store and unified `/task/*` query/output/control
 routes. RPC tasks reject stdin.
 
 Client tasks preserve execution across network reconnects, including results

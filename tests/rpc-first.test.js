@@ -8,7 +8,10 @@ import { apply } from '../index.js';
 const mapping = {
   id: 'abcdefghijklmnopqrstuvwx', name: 'laptop', online: true, mounted: false,
   mount_references: 0, native_mounts_enabled: false,
-  capabilities: { file_stream: { version: 1, descriptor_stat: true, directory_details: true, search_prefix: true } },
+  capabilities: {
+    file_stream: { version: 1, descriptor_stat: true, directory_details: true, search_prefix: true },
+    rpc: { git: { state: 'available', operation_specs: { status: { write: false, execution: 'sync' } } } },
+  },
 };
 const partial = { matches: [], truncated: true, unavailable_mappings: [{ mapping_id: mapping.id, code: 'mapping_offline' }] };
 const serverDiscovery = {
@@ -39,7 +42,7 @@ function fixture(t, config = {}, mode = 'workspace-write', response) {
         const result = response ?? (call.endpoint === 'context' ? (call.method === 'GET' ? { entries: [{ id: 7, taskname: 'test' }] } : { id: 7 })
           : call.endpoint === '/' ? serverDiscovery
           : call.endpoint === 'mappings' ? { mappings: [mapping] }
-          : call.endpoint === 'fs/query/search' ? partial : { task_id: 'task_test', location: 'server' });
+          : call.endpoint === 'fs/query/grep' ? partial : { task_id: 'task_test', location: 'server' });
         return { exitCode: 0, stdout: { text: JSON.stringify(result) } };
       },
     },
@@ -126,9 +129,9 @@ test('failed or cancelled starts keep uncertain outcome visible and are never re
   for (const failure of ['request timed out', new Error('request cancelled')]) {
     const f = fixture(t);
     f.fail(failure);
-    await assert.rejects(f.tools.get('kapsel_shell_exec').execute({ command: 'echo once', target: 'server', mount_mappings: ['laptop'], plan_id: 7 }, f.exec), /Inspect \/tasks.*never automatically replay/);
+    await assert.rejects(f.tools.get('kapsel_shell_exec').execute({ command: 'echo once', target: 'server', mount_mappings: ['laptop'], plan_id: 7 }, f.exec), /Inspect \/task.*never automatically replay/);
     assert.equal(f.calls.length, 1);
-    await assert.rejects(f.tools.get('kapsel_http').execute({ method: 'POST', endpoint: 'shell/exec', json: { command: 'echo once' }, plan_id: 7 }, f.exec), /Inspect \/tasks/);
+    await assert.rejects(f.tools.get('kapsel_http').execute({ method: 'POST', endpoint: 'shell/exec', json: { command: 'echo once' }, plan_id: 7 }, f.exec), /Inspect \/task/);
     assert.equal(f.calls.length, 2);
   }
 });
@@ -136,8 +139,8 @@ test('failed or cancelled starts keep uncertain outcome visible and are never re
 test('RPC-only status and incomplete query metadata pass through without mounts', async t => {
   const f = fixture(t, {}, 'read-only');
   assert.deepEqual(await f.tools.get('kapsel_mappings').execute({}, f.exec), { mappings: [mapping] });
-  assert.deepEqual(await f.tools.get('kapsel_fs_search').execute({ query: 'needle', path: '.' }, f.exec), partial);
-  assert.deepEqual(f.calls.map(c => c.endpoint), ['mappings', 'fs/query/search']);
+  assert.deepEqual(await f.tools.get('kapsel_fs_grep').execute({ query: 'needle', path: '.' }, f.exec), partial);
+  assert.deepEqual(f.calls.map(c => c.endpoint), ['mappings', 'fs/query/grep']);
   assert.ok(f.calls.every(c => c.method === 'GET' && !c.plan));
 });
 
@@ -178,6 +181,18 @@ test('kapsel_rpc targets server when mapping_id is omitted and preserves read/wr
     /not advertised/,
   );
   assert.equal(writable.calls.at(-1).endpoint, '/');
+});
+
+test('mapping RPC prefers the short mapping name and remains read-only', async t => {
+  const f = fixture(t, {}, 'read-only');
+  await f.tools.get('kapsel_rpc').execute({
+    mapping_id: mapping.name, family: 'git', operation: 'status', args: { cwd: '.' },
+  }, f.exec);
+  assert.deepEqual(f.calls.map(c => [c.method, c.endpoint]), [
+    ['GET', 'mappings'],
+    ['POST', 'mappings/laptop/rpc/git/status'],
+  ]);
+  assert.equal(f.calls.at(-1).plan, undefined);
 });
 
 test('bundled skill and prompt teach unified server and mapping RPC usage', t => {
