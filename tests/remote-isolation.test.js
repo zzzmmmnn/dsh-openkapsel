@@ -97,7 +97,7 @@ test('two agents mutate only their own remote workspace and never the local cwd'
       return json(response, 200, {
         name: workspace,
         capabilities: { write: true, shell: true },
-        authentication: { control_token_expires_at: '2099-01-01T00:00:00Z' },
+        authentication: { credentials_expires_at: '2099-01-01T00:00:00Z' },
       });
     }
     if (request.method === 'GET' && endpoint === 'fs/query/list') {
@@ -223,6 +223,8 @@ test('two agents mutate only their own remote workspace and never the local cwd'
       mappingBodies.push({ endpoint, body: JSON.parse((await requestBody(request)).toString('utf8')) });
       return json(response, 200, { task_id: rpcTaskId, kind: 'rpc', status: 'running' });
     }
+    if (request.method === 'GET' && endpoint === 'conversation') return json(response, 200, { next_conversation_id: 0 });
+    if (request.method === 'POST' && endpoint === 'conversation') { const data = JSON.parse((await requestBody(request)).toString('utf8')); return json(response, 201, { conversation_id: data.conversation_id, writer_nonce: '@Ab12@' }); }
     if (request.method === 'GET' && endpoint === 'context') {
       return json(response, 200, { entries: contextEntries });
     }
@@ -355,27 +357,26 @@ test('two agents mutate only their own remote workspace and never the local cwd'
       method: 'PATCH',
       endpoint: 'context/plans/1',
       json: {
-        status: 'completed',
+        status: 'completed', expected_revision: 1,
         debrief: { items: [], outcome: 'succeeded', memory_actions: [], memory_feedback: [], memory_conflicts: [] },
       },
       taskname: 'macos-web',
       message: 'complete demo',
     }, { agent: agentA, signal });
-    assert.deepEqual(contextPatchBodies[0], {
-      taskname: 'macos-web',
-      status: 'completed',
-      debrief: { items: [], outcome: 'succeeded', memory_actions: [], memory_feedback: [], memory_conflicts: [] },
-    });
+    assert.equal(contextPatchBodies[0].status, 'completed');
+    assert.equal(contextPatchBodies[0].expected_revision, 1);
+    assert.equal(contextPatchBodies[0].conversation_id, 0);
+    assert.equal(contextPatchBodies[0].writer_nonce, '@Ab12@');
 
     await registered.get('kapsel_plan_update').execute({
-      plan_id: 1,
+      plan_id: 1, expected_revision: 2,
       taskname: 'macos-web',
       content: 'Updated plan text.',
     }, { agent: agentA, signal });
-    assert.deepEqual(contextPatchBodies[1], {
-      taskname: 'macos-web',
-      content: 'Updated plan text.',
-    });
+    assert.equal(contextPatchBodies[1].content, 'Updated plan text.');
+    assert.equal(contextPatchBodies[1].expected_revision, 2);
+    assert.equal(contextPatchBodies[1].conversation_id, 0);
+    assert.equal(contextPatchBodies[1].writer_nonce, '@Ab12@');
 
     const listValue = await registered.get('kapsel_fs_list').execute({ path: '.' }, { agent: agentA, signal });
     const listRendered = registered.get('kapsel_fs_list').output.render({ path: '.' }, listValue);

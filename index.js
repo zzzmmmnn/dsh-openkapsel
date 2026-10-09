@@ -203,6 +203,9 @@ export function apply(ctx, config = {}) {
     chmodSync(directory, 0o700);
     state = {
       planId: null,
+      conversationId: null,
+      writerNonce: null,
+      pendingConversation: null,
       // Keep the fallback materialized so a Host restart can reuse persisted
       // credentials without first requiring kapsel_config in the new process.
       taskname: resolvedTaskname(config.taskname),
@@ -275,6 +278,46 @@ export function apply(ctx, config = {}) {
     }
   }
 
+  async function ensureConversation(exec) {
+    const state = stateOf(exec);
+    if (Number.isInteger(state.conversationId) && state.writerNonce) {
+      return { conversation_id: state.conversationId, writer_nonce: state.writerNonce };
+    }
+    if (!state.pendingConversation) {
+      const listing = await http('GET', 'conversation', { exec, signal: exec.signal });
+      const id = listing?.next_conversation_id;
+      if (!Number.isInteger(id) || id < 0) throw new Error('OpenKapsel did not supply next_conversation_id');
+      state.pendingConversation = {
+        conversation_id: id,
+        request_id: `dsh-${createHash('sha256').update(String(state.sessionId)).digest('hex').slice(0, 20)}-${id}`,
+        entries: [
+          { role: 'user', content: 'User selected OpenKapsel workspace access through DSH.' },
+          { role: 'ai', content: 'DSH remote workspace session context initialized.' },
+        ],
+      };
+    }
+    // A lost POST response must not advance to a different conversation ID:
+    // repeat this exact request_id to recover the original writer nonce.
+    const pending = state.pendingConversation;
+    const created = await http('POST', 'conversation', {
+      json: pending, exec, signal: exec.signal,
+    });
+    if (created?.conversation_id !== pending.conversation_id || !/^@[A-Za-z0-9]{4}@$/.test(created?.writer_nonce ?? '')) {
+      throw new Error('OpenKapsel did not return a valid Conversation writer nonce');
+    }
+    state.conversationId = pending.conversation_id;
+    state.writerNonce = created.writer_nonce;
+    state.pendingConversation = null;
+    return { conversation_id: state.conversationId, writer_nonce: created.writer_nonce };
+  }
+
+  async function planConversationFields(exec, action) {
+    return {
+      ...await ensureConversation(exec),
+      conversation_entries: [{ role: 'ai', content: String(action).slice(0, 1000) }],
+    };
+  }
+
   async function ensurePlan(exec, { allowCreate = true } = {}) {
     const state = stateOf(exec);
     if (state.planId) return state.planId;
@@ -292,7 +335,11 @@ export function apply(ctx, config = {}) {
     }
     if (!allowCreate) return null;
     const created = await http('POST', 'context', {
-      json: { type: 'plan', taskname, content: 'DeepSeek Harness (dsh-openkapsel) workspace access session.' },
+      json: {
+        type: 'plan', taskname, content: 'DeepSeek Harness (dsh-openkapsel) workspace access session.',
+        subplans: [],
+        ...await planConversationFields(exec, 'Begin remote DSH workspace Plan.'),
+      },
       exec,
       signal: exec.signal,
     });
@@ -417,6 +464,9 @@ export function apply(ctx, config = {}) {
         const taskname = resolvedTaskname(args.taskname, config.taskname);
         state.taskname = taskname;
         state.planId = null;
+        state.conversationId = null;
+        state.writerNonce = null;
+        state.pendingConversation = null;
 
         const initArgv = ['init', args.workspace_url, args.control_token];
         if (args.force) initArgv.push('--force');
@@ -494,7 +544,7 @@ export function apply(ctx, config = {}) {
     defineTool({
       name: 'kapsel_plan_update',
       description:
-        'Update or complete an OpenKapsel Plan (PATCH /context/plans/<id>). Use this instead of kapsel_http for Plan updates so the target Plan id cannot be confused with the optional parent Plan id. Completion requires a structured debrief.',
+        'Update or complete an OpenKapsel Plan (PATCH /context/plans/<id>). Plan parentage is immutable. Requires expected_revision; completion also requires a structured debrief and Conversation append.',
       parameters: {
         plan_id: { type: 'integer', required: true, description: 'Target Plan id to update.' },
         taskname: { type: 'string', description: TASKNAME_DESCRIPTION },
@@ -504,8 +554,7 @@ export function apply(ctx, config = {}) {
           enum: ['in_progress', 'completed', 'cancelled'],
           description: 'Replacement Plan status.',
         },
-        parent_plan_id: { type: 'integer', description: 'Move this Plan below another Plan.' },
-        move_to_root: { type: 'boolean', description: 'Move this Plan to the root level.' },
+        expected_revision: { type: 'integer', required: true, description: 'Current positive Plan revision for optimistic concurrency.' },
         debrief: {
           type: 'object',
           additionalProperties: false,
@@ -554,8 +603,8 @@ export function apply(ctx, config = {}) {
       output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
       async execute(args, exec) {
         await authorizeRemoteMutation(args, exec, 'kapsel_plan_update', 'remote Plan update');
-        if (args.parent_plan_id !== undefined && args.move_to_root === true) {
-          throw new Error('parent_plan_id and move_to_root cannot be used together');
+        if (!Number.isInteger(args.expected_revision) || args.expected_revision <= 0) {
+          throw new Error('Plan updates require a positive expected_revision');
         }
         if (args.status === 'completed' && args.debrief === undefined) {
           throw new Error('completing an OpenKapsel Plan requires a debrief object');
@@ -563,28 +612,29 @@ export function apply(ctx, config = {}) {
         if (args.debrief !== undefined && args.status !== 'completed') {
           throw new Error('debrief is valid only with status="completed"');
         }
-        if (
-          args.content === undefined
-          && args.status === undefined
-          && args.parent_plan_id === undefined
-          && args.move_to_root !== true
-        ) {
-          throw new Error('Plan update requires content, status, parent_plan_id, or move_to_root');
+        if (args.content === undefined && args.status === undefined) {
+          throw new Error('Plan update requires content or status');
         }
 
         const state = stateOf(exec);
         const taskname = resolvedTaskname(args.taskname, state.taskname, config.taskname);
-        const json = { taskname };
+        const json = { taskname, expected_revision: args.expected_revision };
         if (args.content !== undefined) json.content = args.content;
         if (args.status !== undefined) json.status = args.status;
-        if (args.parent_plan_id !== undefined) json.plan_id = args.parent_plan_id;
-        if (args.move_to_root === true) json.plan_id = null;
         if (args.debrief !== undefined) json.debrief = args.debrief;
-        return http('PATCH', `context/plans/${encodeURIComponent(args.plan_id)}`, {
+        if (args.status !== 'cancelled' || args.content !== undefined) {
+          Object.assign(json, await planConversationFields(exec, `Update Plan ${args.plan_id}: ${args.status ?? 'content'}.`));
+        }
+        const result = await http('PATCH', `context/plans/${encodeURIComponent(args.plan_id)}`, {
           json,
           exec,
           signal: exec.signal,
         });
+        // A closed Plan can no longer own subsequent ordinary mutations.
+        if (['completed', 'cancelled'].includes(args.status) && state.planId === args.plan_id) {
+          state.planId = null;
+        }
+        return result;
       },
     }),
 
@@ -643,6 +693,15 @@ export function apply(ctx, config = {}) {
               const state = stateOf(exec);
               requestJson.taskname = resolvedTaskname(args.taskname, state.taskname, config.taskname);
             }
+            const relative = String(args.endpoint).split(/[?#]/, 1)[0].replace(/^\/+/, '');
+            const planCreate = method === 'POST' && relative === 'context' && requestJson.type === 'plan';
+            const planUpdate = method === 'PATCH' && /^context\/plans\/\d+$/.test(relative);
+            if ((planCreate || planUpdate) && requestJson.conversation_id === undefined
+                && !(planUpdate && requestJson.status === 'cancelled' && requestJson.content === undefined)) {
+              Object.assign(requestJson, await planConversationFields(exec,
+                planCreate ? 'Create a DSH remote Plan.' : `Update DSH remote Plan: ${requestJson.status ?? 'content'}.`));
+            }
+            if (planCreate && requestJson.plan_id === undefined && requestJson.subplans === undefined) requestJson.subplans = [];
           } else {
             ctxFields = await mutationContext(args, exec);
           }
@@ -661,6 +720,11 @@ export function apply(ctx, config = {}) {
           exec,
           signal: exec.signal,
         });
+        const closedPlan = /^\/?context\/plans\/(\d+)$/.exec(String(args.endpoint).split(/[?#]/, 1)[0]);
+        if (isMutation && closedPlan && ['completed', 'cancelled'].includes(requestJson?.status)) {
+          const state = stateOf(exec);
+          if (state.planId === Number(closedPlan[1])) state.planId = null;
+        }
         return { body };
       },
     }),

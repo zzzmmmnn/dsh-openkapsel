@@ -2,6 +2,49 @@
 
 Context is the workspace operation history and task graph. It is not a session that must be opened. Read `GET /discovery/context` for live limits and the full Plan-debrief schema.
 
+## Conversation
+
+Conversation is the recent user/AI context log that owns new Plans. It is append-only and lives beside Plan state in the Context database.
+
+Before creating one, query history:
+
+```text
+GET /conversation?limit=100
+```
+
+The response includes `next_conversation_id`. IDs are non-negative, start at `0`, and cannot skip; pass that exact value to creation:
+
+```json
+{
+  "conversation_id": 0,
+  "entries": [
+    {"role": "user", "content": "User wants the reconnect behavior fixed."},
+    {"role": "ai", "content": "AI will inspect and update the client RPC path."}
+  ]
+}
+```
+
+`POST /conversation` returns the caller-supplied `conversation_id`, `writer_nonce` in exact `@xxxx@` form, the created records, and AI instructions. `writer_nonce` is not an authentication token; OpenKapsel stores its original value directly and later uses it only as the Conversation writer nonce.
+
+Append with `POST /conversation/<conversation_id>/entries`:
+
+```json
+{
+  "writer_nonce": "@a1B2@",
+  "entries": [
+    {"role": "user", "content": "User clarified the timeout must not break heartbeat."}
+  ]
+}
+```
+
+Each record receives an immutable per-Conversation `sub_id`. `user` and `ai` content is limited to 1,000 characters and is that side's conversation-context summary; it may preserve important original wording verbatim and does not need extra compression when the source already fits. `summary` may contain up to 8,192 characters and is not tied to a fixed sub-ID. After 40 user/ai entries since the newest summary, append responses return `summary_status.recommended=true` and identify the summary source range from that newest summary itself (or sub_id 1) through the latest entry. After 49 user/ai entries, the 49th is accepted but another user/ai entry is rejected until `role: "summary"` is appended. Summary resets the counter.
+
+`GET /conversation?query=<text>&limit=100` searches across Conversations. By default it searches only each Conversation's newest summary plus records after it. Add `full=true` for complete history. Add `conversation_id=<id>&start_sub_id=<n>&end_sub_id=<n>` for an inclusive range inside one Conversation. The hard result limit is 100, and every query response includes `next_conversation_id` for the next creation call.
+
+Public Plan creation requires `conversation_id`, `writer_nonce`, and non-empty `conversation_entries`; they are committed atomically with the Plan batch. Every non-cancellation-only Plan update requires the same fields. Completion additionally requires at least one new `role: "ai"` Conversation record. Cancellation-only deliberately omits the writer nonce requirement so a lost session does not leave a Plan impossible to close.
+
+Plan completion locks and preflights Context before Memory. The server starts `BEGIN IMMEDIATE` on the Plan's Context database, dry-runs the complete Plan+Conversation update in a SAVEPOINT, rolls that SAVEPOINT back while retaining the outer write lock, applies every debrief Memory create/update/archive/helpful-feedback mutation in one atomic Memory transaction, then reruns and commits the Plan+Conversation update on the same Context connection. Memory remains a separate database, so a process/database failure after Memory succeeds but before the final Context commit can still leave Memory ahead of the Plan. That Memory remains revisioned and can be corrected with `memory_update` or `memory_archive`; query/reconcile it before retrying completion because repeating `debrief.items` can create duplicate new Memory records.
+
 ## Find or create a Plan
 
 Query active root Plans before starting a mutation-heavy task:
@@ -21,7 +64,12 @@ POST /context
   "taskname": "fix-preview",
   "content": "Diagnose and correct preview loading.",
   "scope_paths": ["site"],
-  "memory_tags": ["preview"]
+  "memory_tags": ["preview"],
+  "conversation_id": 123,
+  "writer_nonce": "@a1B2@",
+  "conversation_entries": [
+    {"role": "ai", "content": "AI is starting the preview diagnosis Plan."}
+  ]
 }
 ```
 
@@ -43,6 +91,11 @@ fields and creation logic:
   "content": "Implement and verify the feature.",
   "request_id": "feature-20260921-01",
   "scope_paths": ["src"],
+  "conversation_id": 123,
+  "writer_nonce": "@a1B2@",
+  "conversation_entries": [
+    {"role": "ai", "content": "AI is creating the feature Plan tree."}
+  ],
   "subplans": [
     {"ref": "implementation", "content": "Implement the code."},
     {"ref": "verification", "content": "Add regression tests.", "taskname": "feature-tests"}
@@ -89,8 +142,10 @@ in its Context `request` field, so refs can also be recovered using the Plan tre
 
 Nested `subplans`, child `plan_id`, and arbitrary child fields are rejected.
 For deeper levels, a later call may supply an existing parent `plan_id`, thereby
-creating a new sub-plan with its own direct children. Omitting `subplans` or using
-`[]` creates one plan as before. Notes do not accept `subplans` or `request_id`.
+creating a new sub-plan with its own direct children. Root Plan creation requires
+`subplans`; use `[]` when there are no direct children. Sub-plan creation under
+an existing parent may omit `subplans`. Notes do not accept `subplans` or
+`request_id`.
 
 Content and taskname retain their existing per-entry limits. The combined
 normalized creation request is bounded to 256 KiB of UTF-8 JSON. There may be at
@@ -135,13 +190,14 @@ Ordinary reads should omit Context parameters. To intentionally record a read, p
 
 `GET /context/plans/<plan_id>/tree?max_depth=8&limit=200` returns flat depth-annotated Plans plus operations and Notes attached to them. Rebuild hierarchy from each record's `id` and `plan_id`. Observe truncation fields.
 
-`PATCH /context/plans/<id>` requires `taskname` and accepts optional replacement `content`, optional `plan_id` (`null` moves to root), and optional `status`: `in_progress`, `completed`, or `cancelled`. Parent cycles and self-parenting are rejected.
+`PATCH /context/plans/<id>` requires `taskname` and the current positive `expected_revision`, then accepts optional replacement `content`, optional `plan_id` (`null` moves to root), and optional `status`: `in_progress`, `completed`, or `cancelled`. Every successful update increments `revision`; stale revisions fail with HTTP 412. Parent cycles and self-parenting are rejected.
 
 Completing a Plan requires:
 
 ```json
 {
   "taskname": "fix-preview",
+  "expected_revision": 1,
   "status": "completed",
   "debrief": {
     "items": [

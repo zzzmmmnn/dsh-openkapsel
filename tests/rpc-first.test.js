@@ -39,7 +39,7 @@ function fixture(t, config = {}, mode = 'workspace-write', response) {
           if (failure instanceof Error) throw failure;
           return { exitCode: 1, stderr: { text: failure }, stdout: { text: '' } };
         }
-        const result = response ?? (call.endpoint === 'context' ? (call.method === 'GET' ? { entries: [{ id: 7, taskname: 'test' }] } : { id: 7 })
+        const result = call.endpoint === 'conversation' ? (call.method === 'GET' ? { next_conversation_id: 0 } : { conversation_id: 0, writer_nonce: '@Ab12@' }) : response ?? (call.endpoint === 'context' ? (call.method === 'GET' ? { entries: [{ id: 7, taskname: 'test' }] } : { id: 7 })
           : call.endpoint === '/' ? serverDiscovery
           : call.endpoint === 'mapping' ? { mappings: [mapping] }
           : call.endpoint === 'fs/query/grep' ? partial : { task_id: 'task_test', location: 'server' });
@@ -212,7 +212,7 @@ test('atomic Plan requests and all returned child IDs pass through in one call',
   ] };
   const f = fixture(t, {}, 'workspace-write', receipt);
   const json = { type: 'plan', taskname: 'feature', content: 'Implement', request_id: 'feature-01',
-    subplans: [{ ref: 'code', content: 'Code' }, { ref: 'tests', content: 'Verify' }] };
+    subplans: [{ ref: 'code', content: 'Code' }, { ref: 'tests', content: 'Verify' }], conversation_id: 0, writer_nonce: '@Ab12@', conversation_entries: [{ role: 'ai', content: 'Start feature.' }] };
   const result = await f.tools.get('kapsel_http').execute({ method: 'POST', endpoint: 'context', json }, f.exec);
   assert.deepEqual(result.body, receipt);
   assert.equal(f.calls.length, 1);
@@ -225,7 +225,7 @@ test('atomic Plan requests and all returned child IDs pass through in one call',
 
 test('atomic Plan creation retains approval policy and does not replay failed requests', async t => {
   const args = { method: 'POST', endpoint: 'context', json: { type: 'plan', content: 'Once', taskname: 'feature',
-    request_id: 'feature-02', subplans: [{ ref: 'child', content: 'Child' }] } };
+    request_id: 'feature-02', subplans: [{ ref: 'child', content: 'Child' }], conversation_id: 0, writer_nonce: '@Ab12@', conversation_entries: [{ role: 'ai', content: 'Start feature.' }] } };
   const denied = fixture(t, {}, 'read-only');
   await assert.rejects(denied.tools.get('kapsel_http').execute(args, denied.exec), /read-only/);
   assert.equal(denied.calls.length, 0);
@@ -234,4 +234,63 @@ test('atomic Plan creation retains approval policy and does not replay failed re
   await assert.rejects(failed.tools.get('kapsel_http').execute(args, failed.exec), /response lost/);
   assert.equal(failed.calls.length, 1);
   assert.equal(failed.calls[0].body.request_id, 'feature-02');
+});
+
+test('automatic Plan creation bootstraps Conversation and retains returned writer nonce', async t => {
+  const f = fixture(t);
+  const result = await f.tools.get('kapsel_http').execute({
+    method: 'POST', endpoint: 'context', json: { type: 'plan', taskname: 'bootstrap', content: 'Start job' },
+  }, f.exec);
+  assert.equal(result.body.id, 7);
+  assert.deepEqual(f.calls.map(x => [x.method, x.endpoint]), [
+    ['GET', 'conversation'], ['POST', 'conversation'], ['POST', 'context'],
+  ]);
+  assert.equal(f.calls[1].body.conversation_id, 0);
+  assert.match(f.calls[1].body.request_id, /^dsh-[a-f0-9]{20}-0$/);
+  assert.deepEqual(f.calls[1].body.entries.map(x => x.role), ['user', 'ai']);
+  assert.equal(f.calls[2].body.conversation_id, 0);
+  assert.equal(f.calls[2].body.writer_nonce, '@Ab12@');
+  assert.equal(f.calls[2].body.conversation_entries[0].role, 'ai');
+  assert.deepEqual(f.calls[2].body.subplans, []);
+});
+
+test('typed Plan updates require revisions, have immutable parentage, and append Conversation', async t => {
+  const f = fixture(t);
+  const plan = f.tools.get('kapsel_plan_update');
+  assert.equal(plan.parameters.properties.parent_plan_id, undefined);
+  assert.equal(plan.parameters.properties.move_to_root, undefined);
+  assert.ok(plan.parameters.required.includes('expected_revision'));
+  await assert.rejects(plan.execute({ plan_id: 7, content: 'New' }, f.exec), /expected_revision/);
+  assert.equal(f.calls.length, 0);
+  await plan.execute({ plan_id: 7, expected_revision: 2, content: 'New' }, f.exec);
+  assert.deepEqual(f.calls.map(c => c.endpoint), ['conversation', 'conversation', 'context/plans/7']);
+  const body = f.calls.at(-1).body;
+  assert.equal(body.expected_revision, 2);
+  assert.equal(body.conversation_id, 0);
+  assert.equal(body.writer_nonce, '@Ab12@');
+  assert.equal(body.conversation_entries[0].role, 'ai');
+  assert.equal(body.plan_id, undefined);
+  assert.match(f.skills[0].content, /request-transport.md/);
+});
+
+test('closing the session Plan clears the cached Plan for typed and generic updates', async t => {
+  for (const form of ['typed', 'http']) {
+    const f = fixture(t);
+    const cfg = await f.tools.get('kapsel_config').execute({
+      workspace_url: 'https://example.test/kapsel/w/test_read', control_token: 'test_control',
+    }, f.exec);
+    assert.equal(cfg.plan_id, 7);
+    assert.equal((await f.tools.get('kapsel_status').execute({}, f.exec)).plan_id, 7);
+    const debrief = { items: [], outcome: 'succeeded', memory_actions: [], memory_feedback: [], memory_conflicts: [] };
+    if (form === 'typed') {
+      await f.tools.get('kapsel_plan_update').execute({
+        plan_id: 7, expected_revision: 1, status: 'completed', debrief,
+      }, f.exec);
+    } else {
+      await f.tools.get('kapsel_http').execute({
+        method: 'PATCH', endpoint: 'context/plans/7', json: { expected_revision: 1, status: 'completed', debrief },
+      }, f.exec);
+    }
+    assert.equal((await f.tools.get('kapsel_status').execute({}, f.exec)).plan_id, null);
+  }
 });

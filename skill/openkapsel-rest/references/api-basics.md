@@ -10,11 +10,15 @@ Normalize `workspace_url` by removing its trailing slash. Workspace endpoints ar
 - A preview token is independent. Never substitute it for either workspace credential.
 - `GET <workspace_url>/` never echoes the control token.
 
-Use the control token only on the workspace origin or a documented control-authenticated `/transfer/...` URL. Do not forward it to a static preview URL, public share URL, or workspace application's own route. When operating through an authenticated OAuth or Static MCP connection, use `credential_get` to obtain the current portable REST workspace URL/control token and `credential_renew` to rotate that pair inside the normal renewal window; ordinary MCP Discovery does not expose the secret values.
+Use the control token only on the workspace origin or a documented control-authenticated `/transfer/...` URL. Do not forward it to a static preview URL, public share URL, or workspace application's own route. When operating through an authenticated OAuth or Static MCP connection, use `capability_call` with `family=credential, operation=get` to obtain the current portable REST workspace URL/control token and `operation=renew` to rotate that pair inside the normal renewal window; ordinary MCP Discovery does not expose the secret values.
 
 Control tokens do not sign in to administration. Interactive browser consent on the configured OpenKapsel service origin is a separate user-driven workflow; these REST helpers do not submit credentials to browser forms or follow client callback redirects. Never place a control token in a URL or request log.
 
 The workspace-relative `.openkapsel` directory is reserved private runtime state. File, preview, sharing, application-worker, and restricted-Shell surfaces do not expose it. Use the dedicated recycle, Context, Memory, database-runtime, and environment interfaces instead.
+
+## GET-only transport fallback
+
+When an AI host cannot change the Workspace URL path, HTTP method, or Authorization header, load `GET <workspace_url>/discovery/transport` and follow [request-transport.md](request-transport.md). That dedicated document is the only detailed wire-format reference; prefer ordinary REST whenever the host supports it.
 
 ## Directory-scoped configuration and renewal
 
@@ -34,9 +38,13 @@ Directory-scoped helpers discover and cache `OPENKAPSEL_CREDENTIALS_EXPIRES_AT`.
 | Method | Relative path | Purpose |
 |---|---|---|
 | `GET` | `/` | Compact capability index and links |
+| `GET` | `/discovery/transport` | GET-only query routing and signed-envelope transport contract |
 | `GET` | `/discovery/files` | File, recycle, and binary transfer contract |
 | `GET` | `/discovery/context` | Context and Plan contract |
 | `GET` | `/discovery/memory` | Long-term Memory contract |
+| `GET` | `/discovery/paths` | Shared path boundaries, private-directory, and extra-path rules |
+| `GET` | `/discovery/rpc` | Shared mappings and generic RPC routing contract |
+| `GET` | `/discovery/network` | Shared Shell/web network policy |
 | `GET` | `/discovery/shell` | Shell, task, process, and resource limits |
 | `GET` | `/discovery/schedules` | Schedule operations and schedule-specific limits |
 | `GET` | `/discovery/web` | Preview, FastAPI, libraries, and database runtime |
@@ -47,7 +55,7 @@ Send `Accept: application/json`. Supplying the Bearer token changes capability f
 
 Endpoint contracts are grouped into families. For `available` and `required_capability`, resolve values in the order operation, family, then `endpoint_defaults`; omitted values intentionally inherit instead of repeating identical metadata. Operation `path` overrides the family `path` for routes such as public share inspection or workspace FastAPI APIs.
 
-Every Discovery response also contains `skills.openkapsel_rest`. Its `manifest_url`, `entrypoint_url`, and `archive_url` are public, contain no workspace credential, and require no Authorization header. To install, download `archive_url`, verify it against `archive_sha256`, and extract the single `openkapsel-rest` directory into the AI client's skill directory. An agent that cannot install may read `entrypoint_url` and its linked files directly.
+The root Discovery preamble contains `skills.openkapsel_rest`. Focused section responses inherit that metadata from the root instead of repeating it. The descriptor's `manifest_url`, `entrypoint_url`, and `archive_url` are public, contain no workspace credential, and require no Authorization header. To install, download `archive_url`, verify it against `archive_sha256`, and extract the single `openkapsel-rest` directory into the AI client's skill directory. An agent that cannot install may read `entrypoint_url` and its linked files directly.
 
 ## Context on requests
 

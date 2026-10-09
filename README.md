@@ -319,7 +319,7 @@ budget is 130 seconds for ordinary synchronous requests.
 
 ## Client reconnects and portable text
 
-The bundled REST references track OpenKapsel 1.62.0. The current mapping
+The bundled REST references track OpenKapsel 2.1.0. The current mapping
 handshake requires client 1.62.0+.
 
 A network disconnect does not stop tasks in the running client process.
@@ -444,6 +444,10 @@ transport loss. Paramiko is required only on the mapping client, not by this DSH
 plugin.
 
 The bundled `openkapsel-rest` skill includes `references/ssh-rpc.md`.
+
+## Conversation and Plan updates (OpenKapsel 2.1.0)
+
+The DSH bridge creates a Conversation when needed for automatic Plan management. It obtains `next_conversation_id`, creates a Conversation with an idempotent `request_id`, and retains its returned `writer_nonce` for non-cancellation Plan updates. Plan creation and updates append an AI context entry. Plan updates require the current positive `expected_revision`; fetch the Plan first to avoid stale updates. A Plan's parent cannot be changed after creation. Closed Plans cannot own ordinary new mutations. Error responses include a Unix-seconds server `timestamp`; see the transport reference for clockless clients and HTTP 200 error envelopes.
 
 ## Atomic plan batches
 
