@@ -554,7 +554,7 @@ test('two agents mutate only their own remote workspace and never the local cwd'
         sandbox_permissions: 'workspace-write',
         justification: 'A read does not need escalation.',
       }, { agent: agentA, callId: 'invalid-read-escalation', signal }),
-      /valid only for a mutating HTTP method/,
+      /valid only for a mutation or approved File read/,
     );
     assert.equal(requestLog.length, requestsBeforeEscalatedRead);
     assert.equal(approvalRequests.length, 0);

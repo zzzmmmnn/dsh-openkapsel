@@ -294,3 +294,49 @@ test('closing the session Plan clears the cached Plan for typed and generic upda
     assert.equal((await f.tools.get('kapsel_status').execute({}, f.exec)).plan_id, null);
   }
 });
+
+test('indexed fs_find supports omitted queries, globs, ordering and read-only access', async t => {
+  const f = fixture(t, {}, 'read-only');
+  await f.tools.get('kapsel_fs_find').execute({ path: 'laptop', mode: 'glob', query: '*.py',
+    sort_by: 'modified', sort_order: 'desc', max_results: 25 }, f.exec);
+  await f.tools.get('kapsel_fs_find').execute({ path: '.', max_results: 5 }, f.exec);
+  assert.deepEqual(f.calls.map(c => [c.method, c.endpoint]), [
+    ['GET', 'fs/query/find'], ['GET', 'fs/query/find'],
+  ]);
+  assert.ok(f.calls.every(c => !c.plan));
+  assert.equal(f.calls[0].body, undefined);
+  assert.equal(f.calls[1].body, undefined);
+});
+
+test('explicit Shell and File grants bind nonce without executing, approved Shell passes nonce', async t => {
+  const f = fixture(t);
+  const approval = f.tools.get('kapsel_shell_request_approval');
+  await assert.rejects(approval.execute({ target: 'auto', reason: 'bad', plan_id: 7 }, f.exec), /explicit target/);
+  assert.equal(f.calls.length, 0);
+  await approval.execute({ target: 'server', reason: 'Run tests', plan_id: 7 }, f.exec);
+  assert.deepEqual(f.calls.map(c => c.endpoint), ['conversation', 'conversation', 'shell/approval/request']);
+  assert.deepEqual(f.calls[2].body, { target: 'server', reason: 'Run tests', writer_nonce: '@Ab12@' });
+  assert.equal(f.calls[2].plan, '7');
+  await f.tools.get('kapsel_shell_exec').execute({ command: 'true', target: 'server', approved: true, plan_id: 7 }, f.exec);
+  assert.equal(f.calls.at(-1).endpoint, 'shell/exec');
+  assert.equal(f.calls.at(-1).body.approved, true);
+  assert.equal(f.calls.at(-1).body.writer_nonce, '@Ab12@');
+  await f.tools.get('kapsel_files_request_approval').execute({
+    access: 'read', target: 'laptop', reason: 'Read external tree', path: '/Users',
+    plan_id: 7,
+  }, f.exec);
+  assert.equal(f.calls.at(-1).endpoint, 'files/approval/request');
+  assert.deepEqual(f.calls.at(-1).body, { access: 'read', target: 'laptop',
+    reason: 'Read external tree', path: '/Users', writer_nonce: '@Ab12@' });
+  await f.tools.get('kapsel_http').execute({
+    method: 'POST', endpoint: 'files/approval/request', plan_id: 7,
+    json: { access: 'write', target: 'server', reason: 'Edit temporary file' },
+  }, f.exec);
+  assert.equal(f.calls.at(-1).body.writer_nonce, '@Ab12@');
+  await f.tools.get('kapsel_http').execute({
+    method: 'POST', endpoint: 'fs/read/files', plan_id: 7,
+    json: { paths: ['/Users/test.txt'], target: 'laptop', approved: true },
+  }, f.exec);
+  assert.equal(f.calls.at(-1).body.writer_nonce, '@Ab12@');
+  assert.equal(f.calls.at(-1).plan, '7');
+});

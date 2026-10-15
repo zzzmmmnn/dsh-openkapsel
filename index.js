@@ -54,6 +54,7 @@ export const REMOTE_TOOL_NAMES = Object.freeze([
   'kapsel_fs_read_files',
   'kapsel_fs_manifest',
   'kapsel_fs_grep',
+  'kapsel_fs_find',
   'kapsel_fs_list',
   'kapsel_fs_stat',
   'kapsel_fs_write',
@@ -64,6 +65,8 @@ export const REMOTE_TOOL_NAMES = Object.freeze([
   'kapsel_fs_move',
   'kapsel_transfer',
   'kapsel_recycle',
+  'kapsel_shell_request_approval',
+  'kapsel_files_request_approval',
   'kapsel_shell_exec',
   'kapsel_task_output',
 ]);
@@ -682,9 +685,11 @@ export function apply(ctx, config = {}) {
         const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !readPost;
         let ctxFields = null;
         let requestJson = args.json;
-        if (isMutation) {
-          await authorizeRemoteMutation(args, exec, 'kapsel_http', 'remote REST mutation');
-          if (isContextManagementEndpoint(args.endpoint)) {
+        let requestQuery = args.query;
+        const approvedRead = !isMutation && (requestJson?.approved === true || requestQuery?.approved === true);
+        if (isMutation || approvedRead) {
+          await authorizeRemoteMutation(args, exec, 'kapsel_http', approvedRead ? 'approved remote File read' : 'remote REST mutation');
+          if (isMutation && isContextManagementEndpoint(args.endpoint)) {
             // Context endpoints create/update the attribution graph itself.
             // Their `plan_id` is endpoint data (for example, a Plan parent),
             // not the ordinary mutation-attribution field.
@@ -708,11 +713,20 @@ export function apply(ctx, config = {}) {
         } else {
           validateEscalationArgs(args.sandbox_permissions, args.justification);
           if (args.sandbox_permissions !== undefined) {
-            throw new Error('sandbox_permissions is valid only for a mutating HTTP method');
+            throw new Error('sandbox_permissions is valid only for a mutation or approved File read');
           }
         }
+        // Only explicit approval requests can issue approval URLs. Bind their
+        // nonce, and any approved File/Shell call, to this host session.
+        const relativeEndpoint = String(args.endpoint).split(/[?#]/, 1)[0].replace(/^\/+/, '');
+        const approvalRequest = method === 'POST' && ['shell/approval/request', 'files/approval/request'].includes(relativeEndpoint);
+        if (approvalRequest || requestJson?.approved === true || requestQuery?.approved === true) {
+          const { writer_nonce } = await ensureConversation(exec);
+          if (approvalRequest || requestJson?.approved === true) requestJson = { ...(requestJson ?? {}), writer_nonce };
+          if (requestQuery?.approved === true) requestQuery = { ...requestQuery, writer_nonce };
+        }
         const body = await http(String(args.method).toUpperCase(), args.endpoint, {
-          query: args.query,
+          query: requestQuery,
           json: requestJson,
           planId: ctxFields?.planId,
           taskname: ctxFields?.taskname,
@@ -922,6 +936,24 @@ export function apply(ctx, config = {}) {
     })),
 
     defineTool({
+      name: 'kapsel_fs_find',
+      description: 'Find filenames and directories with indexed search and recursive fallback. Omit query to match all; mode=glob supports *, ?, and character classes. Search Mapping/Storage roots explicitly by path.',
+      parameters: {
+        query: { type: 'string' }, path: { type: 'string' },
+        mode: { type: 'string', enum: ['literal', 'glob'] },
+        sort_by: { type: 'string', enum: ['name', 'path', 'size', 'modified'] },
+        sort_order: { type: 'string', enum: ['asc', 'desc'] },
+        file_type: { type: 'string', enum: ['all', 'file', 'directory'] },
+        max_results: { type: 'integer' }, case_sensitive: { type: 'boolean' },
+        timeout_seconds: { type: 'number' },
+      },
+      output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
+      async execute(args, exec) {
+        return http('GET', 'fs/query/find', { query: args, exec, signal: exec.signal });
+      },
+    }),
+
+    defineTool({
       name: 'kapsel_fs_list',
       description: 'List immediate children of a workspace directory (GET /fs/query/list).',
       parameters: {
@@ -1027,6 +1059,57 @@ export function apply(ctx, config = {}) {
     }),
 
     defineTool({
+      name: 'kapsel_shell_request_approval',
+      description: 'Request unsandboxed Shell access without running a command. Target must be server or an exact Mapping ID. Display the approval_url, obtain Workspace Password approval, then call kapsel_shell_exec with approved=true.',
+      parameters: {
+        target: { type: 'string', required: true, description: 'server or exact Mapping ID; auto is not accepted.' },
+        reason: { type: 'string', required: true, description: 'Specific reason displayed in approval page.' },
+        plan_id: { type: 'number' }, taskname: { type: 'string', description: TASKNAME_DESCRIPTION },
+        message: { type: 'string', description: MESSAGE_DESCRIPTION }, ...REMOTE_WRITE_ESCALATION_PARAMETERS,
+      },
+      output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
+      async execute(args, exec) {
+        if (args.target === 'auto' || !args.reason) throw new Error('explicit target and reason are required');
+        await authorizeRemoteMutation(args, exec, 'kapsel_shell_request_approval', 'request remote Shell permission');
+        const context = await mutationContext(args, exec);
+        const { writer_nonce } = await ensureConversation(exec);
+        return http('POST', 'shell/approval/request', {
+          json: { target: args.target, reason: args.reason, writer_nonce },
+          planId: context.planId, taskname: context.taskname, message: context.message,
+          exec, signal: exec.signal,
+        });
+      },
+    }),
+
+    defineTool({
+      name: 'kapsel_files_request_approval',
+      description: 'Request File read/write access without reading or writing. Explicit server/Mapping target; optional absolute external path and scope_is_directory=false for file alias. Display the returned approval_url before approved=true operations.',
+      parameters: {
+        access: { type: 'string', required: true, enum: ['read', 'write'] },
+        target: { type: 'string', required: true, description: 'server or exact Mapping ID.' },
+        reason: { type: 'string', required: true },
+        path: { type: 'string', description: 'Optional absolute external directory or file path.' },
+        scope_is_directory: { type: 'boolean' },
+        plan_id: { type: 'number' }, taskname: { type: 'string', description: TASKNAME_DESCRIPTION },
+        message: { type: 'string', description: MESSAGE_DESCRIPTION }, ...REMOTE_WRITE_ESCALATION_PARAMETERS,
+      },
+      output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
+      async execute(args, exec) {
+        if (args.target === 'auto' || !args.reason) throw new Error('explicit target and approval reason are required');
+        await authorizeRemoteMutation(args, exec, 'kapsel_files_request_approval', 'request remote File permission');
+        const context = await mutationContext(args, exec);
+        const { writer_nonce } = await ensureConversation(exec);
+        return http('POST', 'files/approval/request', {
+          json: { access: args.access, target: args.target, reason: args.reason, writer_nonce,
+            ...(args.path === undefined ? {} : { path: args.path }),
+            ...(args.scope_is_directory === undefined ? {} : { scope_is_directory: args.scope_is_directory }) },
+          planId: context.planId, taskname: context.taskname, message: context.message,
+          exec, signal: exec.signal,
+        });
+      },
+    }),
+
+    defineTool({
       name: 'kapsel_shell_exec',
       description:
         'Run a Shell command via POST /shell/exec. target=auto (default) routes a mapped cwd to its client and other paths to the server; server/client may be explicit. Client execution uses its own platform and sandbox policy and never falls back to server. Server cwd mapping is automatic; declare extra native dependencies with mount_mappings. Returns a unified task_id for kapsel_task_output. Never automatically replay a start after transport uncertainty.',
@@ -1042,6 +1125,7 @@ export function apply(ctx, config = {}) {
         },
         timeout_seconds: { type: 'number', description: 'Optional task execution deadline in seconds; separate from the plugin Shell startup request timeout.' },
         interactive: { type: 'boolean', description: 'Keep stdin available (true) or non-interactive (default false).' },
+        approved: { type: 'boolean', description: 'Use previous unsandboxed Shell grant; first call kapsel_shell_request_approval.' },
         plan_id: { type: 'number' },
         taskname: { type: 'string', description: TASKNAME_DESCRIPTION },
         message: { type: 'string', description: MESSAGE_DESCRIPTION },
@@ -1067,6 +1151,8 @@ export function apply(ctx, config = {}) {
           ...(args.mount_mappings !== undefined ? { mount_mappings: args.mount_mappings } : {}),
           ...(args.timeout_seconds !== undefined ? { timeout_seconds: args.timeout_seconds } : {}),
           interactive: args.interactive === true,
+          ...(args.approved === undefined ? {} : { approved: args.approved }),
+          ...(args.approved === true ? { writer_nonce: (await ensureConversation(exec)).writer_nonce } : {}),
         };
         return http('POST', 'shell/exec', {
           json,
@@ -1123,7 +1209,7 @@ export function apply(ctx, config = {}) {
     systemPrompt.section({
       name: 'kapsel',
       order: 195,
-      text: `OpenKapsel workspace access is available through the \`kapsel_*\` tools. When a user supplies an OpenKapsel workspace URL and control token, call \`kapsel_config\` once to initialize it, then operate the remote workspace through the typed tools or \`kapsel_http\`. Use \`kapsel_plan_update\` for Plan updates and completion; its typed debrief avoids ambiguous generic request fields. When runtime Discovery advertises atomic_subplans, create a parent and direct children in one kapsel_http POST context call using subplans and a stable request_id inside json; use the returned child IDs for later operations. The authoritative REST contract is the vendored \`${SKILL_NAME}\` skill — load it with the \`skill\` tool before nontrivial operations. For RPC, call \`kapsel_rpc\` without \`mapping_id\` to target the server workspace, or provide \`mapping_id\` to target a client mapping; server-capable families come from Discovery and mapping operation schemas come from \`kapsel_mapping_list\`. On RPC-first servers, online=true with mounted=false is normal: use file/RPC tools without mounting. Keep Shell target=auto unless server execution is intended; declare extra server native dependencies with mount_mappings, and FastAPI dependencies in api/mappings.json. Never automatically replay a Shell/RPC write after a timeout, cancellation, or lost response; inspect existing tasks and affected paths first. Check unavailable_mappings and truncated query results before claiming a search is complete. DSH \`read-only\` mode permits remote reads but denies remote writes, edits, Shell commands, and mutating HTTP methods. After such a denial, retry the exact call with \`sandbox_permissions: "workspace-write"\` and a one-sentence \`justification\` only when the mutation is necessary; approval applies to that call alone. DSH \`workspace-write\` and \`danger-full-access\` are equivalent for this bridge because the OpenKapsel token remains the remote authority boundary. Never print or commit the control token.`,
+      text: `OpenKapsel workspace access is available through the \`kapsel_*\` tools. When a user supplies an OpenKapsel workspace URL and control token, call \`kapsel_config\` once to initialize it, then operate the remote workspace through the typed tools or \`kapsel_http\`. Use \`kapsel_plan_update\` for Plan updates and completion; its typed debrief avoids ambiguous generic request fields. When runtime Discovery advertises atomic_subplans, create a parent and direct children in one kapsel_http POST context call using subplans and a stable request_id inside json; use the returned child IDs for later operations. The authoritative REST contract is the vendored \`${SKILL_NAME}\` skill — load it with the \`skill\` tool before nontrivial operations. For RPC, call \`kapsel_rpc\` without \`mapping_id\` to target the server workspace, or provide \`mapping_id\` to target a client mapping; server-capable families come from Discovery and mapping operation schemas come from \`kapsel_mapping_list\`. On RPC-first servers, online=true with mounted=false is normal: use file/RPC tools without mounting. Keep Shell target=auto unless server execution is intended; declare extra server native dependencies with mount_mappings, and FastAPI dependencies in api/mappings.json. For unsandboxed Shell use kapsel_shell_request_approval with an explicit server/Mapping target and reason, show the approval_url, and only after Workspace Password approval use kapsel_shell_exec with approved=true. For extra File access use kapsel_files_request_approval with access=read|write and explicit target, then use kapsel_http with approved=true and matching target. Remote approval and DSH local write approval are separate; the plugin supplies writer_nonce and Plan Context. Use kapsel_fs_find for indexed filename/glob searches and sorting. Never automatically replay a Shell/RPC write after a timeout, cancellation, or lost response; inspect existing tasks and affected paths first. Check unavailable_mappings and truncated query results before claiming a search is complete. DSH \`read-only\` mode permits remote reads but denies remote writes, edits, Shell commands, and mutating HTTP methods. After such a denial, retry the exact call with \`sandbox_permissions: "workspace-write"\` and a one-sentence \`justification\` only when the mutation is necessary; approval applies to that call alone. DSH \`workspace-write\` and \`danger-full-access\` are equivalent for this bridge because the OpenKapsel token remains the remote authority boundary. Never print or commit the control token.`,
     });
   }
 

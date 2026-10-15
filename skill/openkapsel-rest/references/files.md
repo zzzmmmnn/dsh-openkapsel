@@ -14,7 +14,7 @@ All paths are workspace-relative unless they are absolute paths inside the works
 | `GET` | `/fs/query/stat` | required `path`; optional comma-separated `fields` |
 | `POST` | `/fs/query/manifest` | bounded `items` with `path` plus optional expected `size`/`sha256`; returns per-file synchronization status |
 | `POST` | `/fs/read/files` | read one or more text files with `paths`, shared character `offset`, optional `encoding`, per-file errors, and bounded total content |
-| `GET` | `/fs/query/find` | recursive filename/directory search: `path=.`, required literal `query`, `max_results`, `case_sensitive=false`, `timeout_seconds=5` |
+| `GET` | `/fs/query/find` | indexed filename/directory search with recursive fallback: `path=.`, optional `query` (omitting it matches all filenames), `mode=literal|glob` (glob supports `*`, `?`, `[]`), `sort_by=name|path|size|modified`, `sort_order=asc|desc`, `file_type=all|file|directory`, `max_results` (default 50; maximum 1000 or a lower configured server limit), `case_sensitive=false`, `timeout_seconds=5` |
 | `GET` | `/fs/query/grep` | content grep: `path=.`, required `query`, `depth`, `max_results`, `regex`, `case_sensitive` |
 | `GET` | `/fs/query/tree` | `path=.`, `depth=2`; nested tree bounded by published node/depth limits |
 | `GET|HEAD` | `/fs/content` | required `path`; raw bytes, ETag, Last-Modified, single HTTP Range support |
@@ -27,9 +27,22 @@ For a recursive inventory, use `{"recursive":true,"path":"src","depth":8,"includ
 
 Prefer `POST /fs/read/files` with `{"paths":["src/main.py","README.md"],"limit":65536,"max_total_chars":262144}` when reading several small source files. Limits count characters (per-file and aggregate), bounded by `max_read_chars`; paths are bounded by `max_batch_file_operations`. Check each item's `status` (HTTP 207 means partial errors). Continue truncated content by calling `/fs/read/files` again with the same one-item `paths` array and `offset=next_offset`; retry remaining paths separately on `read_budget_exhausted`. It is read-only and requires no mutation context.
 
-`/fs/query/find` recursively matches a literal substring against each file or directory basename. It does not follow symlinks. The default search deadline is 5 seconds; a deadline returns the matches found so far with `timed_out=true` and `truncated=true`. Inside mappings, current clients automatically use the advertised `file_search` index (Everything IPC, mdfind, or plocate) when available and otherwise recursively traverse the export.
+`/fs/query/find` matches an optional literal basename substring (or `mode=glob`) using an available native index, with recursive fallback when unavailable. It does not follow symlinks. The default search deadline is 5 seconds; a deadline returns the matches found so far with `timed_out=true` and `truncated=true`. On Linux, server and mapping client use the same private SQLite/watchfiles filename-index engine, with separate database paths. Broad Server `fs_find` only searches native files; Mapping and Storage Provider roots are excluded even when offline. Query those sources separately by supplying their explicit `path`. Windows prefers Everything QUERY2 IPC for indexed native sort/date/size and bounded pages; when Everything is unavailable, Windows Client uses the same SQLite + `watchfiles` index as Linux. File-name trigrams use Unicode `casefold()` while preserving original case for `case_sensitive=true`; the SQLite database is outside the export and indexes size plus UTC modification/creation times. macOS uses Spotlight `mdfind` with widened Glob candidates and exact post-filtering. For `sort_by=modified` or `size`, Spotlight metadata predicates divide the search into disjoint best-first time/size windows (time descending starts in the last 24h, ascending from 1970; size descending starts at 200 GiB, ascending checks zero bytes then 256 bytes and doubles). Timeouts cover the entire window sequence. Linux's private SQLite index stores size (bytes), modified time (UTC epoch nanoseconds) and nullable creation time (UTC epoch nanoseconds). Searches fall back to recursive traversal when a native index is unavailable.
 
 Content grep at `/fs/query/grep` supports repeated `include`/`exclude` query parameters, e.g. `include=*.py&exclude=node_modules`. Slash-free patterns match basenames; slash-containing patterns match root-relative POSIX paths, with case-sensitive Python fnmatch semantics (`*` spans `/`). Excludes win and prune matching directories; includes only filter files. Each group allows 64 patterns of up to 512 characters. Its MCP tool is `fs_grep`.
+
+For temporary File access that is not covered by existing permissions,
+request `POST /files/approval/request` first with `access: "read"|"write"`,
+explicit `target: "server"` or an exact Mapping ID, the owning Conversation's
+`writer_nonce`, a concrete `reason`, and the in-progress Plan Context headers.
+For access outside the configured workspace, also supply the absolute `path`;
+use `scope_is_directory: false` for a file path or symlink. Only the request
+returns an approval URL. After Workspace Password approval, File API calls must
+separately include `approved: true`, the same `writer_nonce`, explicit
+`target`, and Plan Context. A read grant never implies write access, and an
+unscoped grant cannot unlock external paths. Mapping write protection,
+deny/read-only rules, protected configuration and OS permissions still apply.
+Generic RPC and upload endpoints cannot use File approval grants.
 
 For a single mapping, these operations run client-locally in one RPC with an
 updated client. RPC-first servers do not fall back to FUSE. Reduce batch size,

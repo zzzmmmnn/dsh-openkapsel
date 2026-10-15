@@ -180,10 +180,11 @@ publishes none. Mount it in the dedicated agent preset, not globally.
 | Tool | Purpose |
 |---|---|
 | `kapsel_config` / `kapsel_status` | Configure or inspect the active workspace |
-| `kapsel_plan_update` | Update, reparent, cancel, or complete a Plan with a structured debrief |
-| `kapsel_fs_list` / `kapsel_fs_read_files` / `kapsel_fs_stat` / `kapsel_fs_grep` | Read-side filesystem |
+| `kapsel_plan_update` | Update or complete a Plan (parentage cannot be changed) with a structured debrief with a structured debrief |
+| `kapsel_fs_list` / `kapsel_fs_read_files` / `kapsel_fs_stat` / `kapsel_fs_grep` / `kapsel_fs_find` | Read-side filesystem |
 | `kapsel_fs_write` / `kapsel_fs_replace` | Remote text write/edit |
 | `kapsel_shell_exec` / `kapsel_task_output` | Run a Shell task on the server or a mapped client and poll its output |
+| `kapsel_shell_request_approval`, `kapsel_files_request_approval` | Request separate unsandboxed Shell and scoped File read/write grants; return approval URLs but do not execute operations |
 | `kapsel_mapping_list` | List mapped client directories, online status, and advertised execution/RPC capabilities |
 | `kapsel_rpc` | Unified server/mapping RPC entry: omit `mapping_id` for the server workspace or provide it for a client mapping; sync returns directly, task returns a normal server or unified client task id; writes use DSH approval + Plan/Context and mapped writes require a writable mapping |
 | `kapsel_fs_copy` / `kapsel_fs_move` / `kapsel_transfer` | Copy or move across workspace and client storage, then inspect/cancel/resume asynchronous transfers |
@@ -277,14 +278,42 @@ integration test verifies that each remote workspace receives only its own
 write, the local sentinel remains unchanged, and credentials exist only under
 the private state root.
 
+## Temporary Shell and File approvals (OpenKapsel 2.3.0)
+
+OpenKapsel uses explicit, scoped Workspace Password approvals independently
+of the host agent's own mutation permission. Before unsandboxed Shell execution,
+call `kapsel_shell_request_approval` with `target: "server"` or the exact
+Mapping ID and a specific `reason`. The response may include an
+`approval_url`; open it to grant access, then pass `approved: true` to
+`kapsel_shell_exec`. The adapter supplies the owning Conversation's
+`writer_nonce` automatically. Merely calling Shell never creates an
+approval URL. An omitted Shell timeout defaults to 120 seconds; explicitly
+provided finite positive timeouts are not capped by the old client maximum.
+
+For File read/write grants, use `kapsel_files_request_approval` with
+`access: "read"|"write"`, explicit `target`, `reason`, and optionally an
+absolute external `path` (set `scope_is_directory: false` for a file alias).
+After approval, call the relevant File REST API through `kapsel_http` with
+`approved: true` and matching `target`. The adapter supplies the nonce and
+Plan Context automatically, including for approved reads. File read and write
+grants are separate; unscoped grants cannot unlock external paths. Grants
+do not bypass path deny rules, Mapping write protection, OS permissions or
+protected configuration. For more detail, read the bundled `shell` and `files`
+reference chapters. Host agent write approval still applies to any request
+needing remote mutation attribution.
+
+`kapsel_fs_find` exposes indexed filename search with recursive fallback.
+`query` is optional (omitting it matches all filenames), `mode` can be
+`literal` or `glob`, and results can be sorted by name, path, size or
+modification time. Use an explicit Mapping/Storage path to search that source.
+
 ## Unified RPC and read-side tools
 
 Version 0.9.0 added `kapsel_fs_read_files`, `kapsel_fs_manifest`, and
 `kapsel_fs_grep`. The current unified RPC contract targets OpenKapsel 1.62.0+.
 Git and Archive operations use `kapsel_rpc`; Git read operations
-remain independent of Shell/client execution permission and use bounded
-sanitized snapshots. Git `add`, `commit`, `restore`, `checkout`,
-`fetch`, `pull`, and `clone` are `write=true, execution=task`;
+remain independent of Shell/client execution permission and run bounded, validated Git reads directly in the original repository while retaining trusted operator Git configuration. Git `add`, `commit`, `restore`, `checkout`, branch/tag/stash mutations,
+`fetch`, `pull`, `push`, and `clone` are `write=true, execution=task`;
 Archive `create` and `extract` use the same task model.
 
 `kapsel_rpc` is the single dynamic RPC entry point for both locations. Omit
@@ -319,17 +348,19 @@ budget is 130 seconds for ordinary synchronous requests.
 
 ## Client reconnects and portable text
 
-The bundled REST references track OpenKapsel 2.1.0. The current mapping
+The bundled REST references track OpenKapsel 2.3.0. The current mapping
 handshake requires client 1.62.0+.
 
-A network disconnect does not stop tasks in the running client process.
-Reconnect and list/query the original task IDs to retrieve output and exit
-status, including tasks that completed offline, or to send stdin/interrupt/kill.
-Deadlines continue offline. Uncollected results remain in bounded client memory;
-the registry limit is max_tasks + 4. Reading through completed output marks a
-result collected; collected results have one-hour/four-record retention and may
-be evicted earlier for capacity. Client process restarts do not restore tasks.
-Do not automatically replay a start whose response was lost.
+An interrupted connection does not automatically cancel a client Shell task.
+Short tasks (timeout at most 120 seconds) run in the Client process and do not
+survive a Client process restart. Longer tasks (timeout above 120 seconds) run in
+the Client's shared, disk-backed Job Manager and can survive Client restart.
+The Job Manager is limited to 16 jobs globally and four per Mapping key. Job IDs
+have the form `&xxxx&`. Query `/task/*` after reconnect using the original ID;
+Manager output is disk-backed and can be read incrementally. If a task has
+disappeared, do not infer its outcome or automatically replay its start.
+The Client default timeout is 120 seconds, while an explicit finite positive
+timeout can be much longer (subject to the actual runtime policy).
 
 Text APIs default to UTF-8 without using the host locale. For a non-default
 encoding, pass `encoding` to `kapsel_fs_read_files` (or in the JSON body for
