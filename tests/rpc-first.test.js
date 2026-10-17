@@ -340,3 +340,45 @@ test('explicit Shell and File grants bind nonce without executing, approved Shel
   assert.equal(f.calls.at(-1).body.writer_nonce, '@Ab12@');
   assert.equal(f.calls.at(-1).plan, '7');
 });
+
+
+test('function-owned Approval validates arguments and binds session nonce on typed and generic routes', async t => {
+  const f = fixture(t);
+  const generic = f.tools.get('kapsel_function_request_approval');
+  await assert.rejects(generic.execute({ function: 'shell.exec', target: 'auto', reason: 'Why', plan_id: 7 }, f.exec), /explicit target/);
+  await assert.rejects(generic.execute({ function: 'shell.exec', target: 'server', args: [], reason: 'Why', plan_id: 7 }, f.exec), /must be an object/);
+  assert.equal(f.calls.length, 0);
+  await generic.execute({
+    function: 'files.write', target: 'laptop', args: { path: '/Users', access: 'write' },
+    reason: 'Update plugin', plan_id: 7, taskname: 'plugin',
+  }, f.exec);
+  assert.deepEqual(f.calls.map(c => c.endpoint), ['conversation', 'conversation', 'function/approval/request']);
+  assert.deepEqual(f.calls[2].body, {
+    function: 'files.write', target: 'laptop', args: { path: '/Users', access: 'write' },
+    reason: 'Update plugin', writer_nonce: '@Ab12@',
+  });
+  assert.equal(f.calls[2].plan, '7');
+  await f.tools.get('kapsel_http').execute({
+    method: 'POST', endpoint: '/function/approval/request', plan_id: 7,
+    json: { function: 'shell.exec', target: 'server', args: {}, reason: 'Test', writer_nonce: '@Wrong@' },
+  }, f.exec);
+  assert.equal(f.calls.at(-1).endpoint, '/function/approval/request');
+  assert.equal(f.calls.at(-1).body.writer_nonce, '@Ab12@');
+  assert.equal(f.calls.at(-1).plan, '7');
+  assert.match(f.prompts.join('\n'), /kapsel_function_request_approval/);
+  assert.match(f.skills[0].content, /completed Plan is immutable/i);
+});
+
+test('closed cached Plan is discarded on server rejection without replaying the mutation', async t => {
+  const f = fixture(t);
+  await f.tools.get('kapsel_config').execute({
+    workspace_url: 'https://example.test/kapsel/w/test_read', control_token: 'test_control',
+  }, f.exec);
+  assert.equal((await f.tools.get('kapsel_status').execute({}, f.exec)).plan_id, 7);
+  f.fail('completed plan cannot be modified');
+  const count = f.calls.length;
+  await assert.rejects(f.tools.get('kapsel_fs_write').execute({ path: 'tmp.txt', content: 'only once' }, f.exec), /completed plan cannot be modified/);
+  assert.equal(f.calls.length, count + 1);
+  f.fail(null);
+  assert.equal((await f.tools.get('kapsel_status').execute({}, f.exec)).plan_id, null);
+});

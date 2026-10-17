@@ -2,6 +2,8 @@
 
 Read `GET /discovery/files` first when server-specific limits or availability matter.
 
+For other functions with registered approval support, use `POST /function/approval/request` with `function`, exact `target`, function-specific `args`, `reason`, owning `plan_id` and `writer_nonce`. The approval response does not execute the function; display its `approval_url` and await confirmation before sending a separately approved operation. Legacy `/shell/approval/request` and `/files/approval/request` continue to work. Neither generic nor legacy approvals override explicit sandbox `ro` or `deny` path rules.
+
 For parsed configuration edits or table queries, use the optional [structured/tabular RPC families](data-rpc.md) instead of reading an entire binary or multi-gigabyte CSV through text APIs.
 
 ## Read operations

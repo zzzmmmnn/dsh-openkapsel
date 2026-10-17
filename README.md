@@ -184,7 +184,7 @@ publishes none. Mount it in the dedicated agent preset, not globally.
 | `kapsel_fs_list` / `kapsel_fs_read_files` / `kapsel_fs_stat` / `kapsel_fs_grep` / `kapsel_fs_find` | Read-side filesystem |
 | `kapsel_fs_write` / `kapsel_fs_replace` | Remote text write/edit |
 | `kapsel_shell_exec` / `kapsel_task_output` | Run a Shell task on the server or a mapped client and poll its output |
-| `kapsel_shell_request_approval`, `kapsel_files_request_approval` | Request separate unsandboxed Shell and scoped File read/write grants; return approval URLs but do not execute operations |
+| `kapsel_shell_request_approval`, `kapsel_files_request_approval`, `kapsel_function_request_approval` | Request legacy Shell/File or generic function-owned grants; return approval URLs without executing operations |
 | `kapsel_mapping_list` | List mapped client directories, online status, and advertised execution/RPC capabilities |
 | `kapsel_rpc` | Unified server/mapping RPC entry: omit `mapping_id` for the server workspace or provide it for a client mapping; sync returns directly, task returns a normal server or unified client task id; writes use DSH approval + Plan/Context and mapped writes require a writable mapping |
 | `kapsel_fs_copy` / `kapsel_fs_move` / `kapsel_transfer` | Copy or move across workspace and client storage, then inspect/cancel/resume asynchronous transfers |
@@ -289,6 +289,13 @@ Mapping ID and a specific `reason`. The response may include an
 `writer_nonce` automatically. Merely calling Shell never creates an
 approval URL. An omitted Shell timeout defaults to 120 seconds; explicitly
 provided finite positive timeouts are not capped by the old client maximum.
+
+For generic function-owned Approval use `kapsel_function_request_approval` with
+a registered `function`, exact `target`, function-specific `args`, and `reason`.
+The adapter supplies the private Conversation writer nonce and owning Plan; the
+returned approval URL does not execute the function. Approval never bypasses
+explicit sandbox read-only or deny path rules. Completed Plans are immutable;
+create a new Plan for later work while modifying existing Memory independently.
 
 For File read/write grants, use `kapsel_files_request_approval` with
 `access: "read"|"write"`, explicit `target`, `reason`, and optionally an

@@ -190,7 +190,7 @@ Ordinary reads should omit Context parameters. To intentionally record a read, p
 
 `GET /context/plans/<plan_id>/tree?max_depth=8&limit=200` returns flat depth-annotated Plans plus operations and Notes attached to them. Rebuild hierarchy from each record's `id` and `plan_id`. Observe truncation fields.
 
-`PATCH /context/plans/<id>` requires `taskname` and the current positive `expected_revision`, then accepts optional replacement `content`, optional `plan_id` (`null` moves to root), and optional `status`: `in_progress`, `completed`, or `cancelled`. Every successful update increments `revision`; stale revisions fail with HTTP 412. Parent cycles and self-parenting are rejected.
+`PATCH /context/plans/<id>` requires `taskname` and the current positive `expected_revision`, then accepts optional replacement `content` and optional `status`: `in_progress`, `completed`, or `cancelled`. Plan parentage cannot be modified. Every successful update increments `revision`; stale revisions fail with HTTP 412. **A completed Plan is immutable:** it cannot be renamed, edited, cancelled, reopened, or completed a second time. Start subsequent work under a new `in_progress` Plan; existing Memory may be revised independently under that new Plan. `cancelled` remains available for active Plan cancellation.
 
 Completing a Plan requires:
 

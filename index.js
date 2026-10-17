@@ -67,6 +67,7 @@ export const REMOTE_TOOL_NAMES = Object.freeze([
   'kapsel_recycle',
   'kapsel_shell_request_approval',
   'kapsel_files_request_approval',
+  'kapsel_function_request_approval',
   'kapsel_shell_exec',
   'kapsel_task_output',
 ]);
@@ -276,6 +277,13 @@ export function apply(ctx, config = {}) {
       });
       return parseJson(out);
     } catch (error) {
+      // An external agent may have completed our cached default Plan.
+      // Never retry a rejected mutation automatically: the next one can
+      // create/select a fresh Plan after clearing this stale ID.
+      if (planId != null && state.planId === planId
+          && /completed plan cannot be modified|plan is already completed|requires an? in_progress plan/i.test(String(error?.message ?? error))) {
+        state.planId = null;
+      }
       if (!shellStart) throw error;
       throw new Error(`${error?.message ?? error} A timeout, cancellation, or lost response does not confirm the remote task stopped. Inspect /task/list or /task/get/<id> before retrying; never automatically replay the command.`);
     }
@@ -719,7 +727,7 @@ export function apply(ctx, config = {}) {
         // Only explicit approval requests can issue approval URLs. Bind their
         // nonce, and any approved File/Shell call, to this host session.
         const relativeEndpoint = String(args.endpoint).split(/[?#]/, 1)[0].replace(/^\/+/, '');
-        const approvalRequest = method === 'POST' && ['shell/approval/request', 'files/approval/request'].includes(relativeEndpoint);
+        const approvalRequest = method === 'POST' && ['shell/approval/request', 'files/approval/request', 'function/approval/request'].includes(relativeEndpoint);
         if (approvalRequest || requestJson?.approved === true || requestQuery?.approved === true) {
           const { writer_nonce } = await ensureConversation(exec);
           if (approvalRequest || requestJson?.approved === true) requestJson = { ...(requestJson ?? {}), writer_nonce };
@@ -1110,6 +1118,36 @@ export function apply(ctx, config = {}) {
     }),
 
     defineTool({
+      name: 'kapsel_function_request_approval',
+      description: 'Request function-owned temporary approval without running a function. Pass the exact registered function (e.g. shell.exec or files.read), server/Mapping target and function-specific args. Display approval_url before approved execution.',
+      parameters: {
+        function: { type: 'string', required: true, description: 'Registered function name, e.g. shell.exec or files.read.' },
+        target: { type: 'string', required: true, description: 'server or an exact Mapping ID, not auto.' },
+        args: { type: 'object', additionalProperties: true, description: 'Function-specific scope request; interpreted by the target Client.' },
+        reason: { type: 'string', required: true, description: 'Specific approval reason shown to the user.' },
+        plan_id: { type: 'number' }, taskname: { type: 'string', description: TASKNAME_DESCRIPTION },
+        message: { type: 'string', description: MESSAGE_DESCRIPTION }, ...REMOTE_WRITE_ESCALATION_PARAMETERS,
+      },
+      output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
+      async execute(args, exec) {
+        if (!/^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/.test(args.function ?? '')
+            || !args.target || args.target === 'auto' || !args.reason?.trim()
+            || (args.args !== undefined && (args.args === null || typeof args.args !== 'object' || Array.isArray(args.args)))) {
+          throw new Error('registered function, explicit target, object args and reason are required');
+        }
+        await authorizeRemoteMutation(args, exec, 'kapsel_function_request_approval', 'request remote function approval');
+        const context = await mutationContext(args, exec);
+        const { writer_nonce } = await ensureConversation(exec);
+        return http('POST', 'function/approval/request', {
+          json: { function: args.function, target: args.target, args: args.args ?? {},
+            reason: args.reason, writer_nonce },
+          planId: context.planId, taskname: context.taskname, message: context.message,
+          exec, signal: exec.signal,
+        });
+      },
+    }),
+
+    defineTool({
       name: 'kapsel_shell_exec',
       description:
         'Run a Shell command via POST /shell/exec. target=auto (default) routes a mapped cwd to its client and other paths to the server; server/client may be explicit. Client execution uses its own platform and sandbox policy and never falls back to server. Server cwd mapping is automatic; declare extra native dependencies with mount_mappings. Returns a unified task_id for kapsel_task_output. Never automatically replay a start after transport uncertainty.',
@@ -1209,7 +1247,7 @@ export function apply(ctx, config = {}) {
     systemPrompt.section({
       name: 'kapsel',
       order: 195,
-      text: `OpenKapsel workspace access is available through the \`kapsel_*\` tools. When a user supplies an OpenKapsel workspace URL and control token, call \`kapsel_config\` once to initialize it, then operate the remote workspace through the typed tools or \`kapsel_http\`. Use \`kapsel_plan_update\` for Plan updates and completion; its typed debrief avoids ambiguous generic request fields. When runtime Discovery advertises atomic_subplans, create a parent and direct children in one kapsel_http POST context call using subplans and a stable request_id inside json; use the returned child IDs for later operations. The authoritative REST contract is the vendored \`${SKILL_NAME}\` skill — load it with the \`skill\` tool before nontrivial operations. For RPC, call \`kapsel_rpc\` without \`mapping_id\` to target the server workspace, or provide \`mapping_id\` to target a client mapping; server-capable families come from Discovery and mapping operation schemas come from \`kapsel_mapping_list\`. On RPC-first servers, online=true with mounted=false is normal: use file/RPC tools without mounting. Keep Shell target=auto unless server execution is intended; declare extra server native dependencies with mount_mappings, and FastAPI dependencies in api/mappings.json. For unsandboxed Shell use kapsel_shell_request_approval with an explicit server/Mapping target and reason, show the approval_url, and only after Workspace Password approval use kapsel_shell_exec with approved=true. For extra File access use kapsel_files_request_approval with access=read|write and explicit target, then use kapsel_http with approved=true and matching target. Remote approval and DSH local write approval are separate; the plugin supplies writer_nonce and Plan Context. Use kapsel_fs_find for indexed filename/glob searches and sorting. Never automatically replay a Shell/RPC write after a timeout, cancellation, or lost response; inspect existing tasks and affected paths first. Check unavailable_mappings and truncated query results before claiming a search is complete. DSH \`read-only\` mode permits remote reads but denies remote writes, edits, Shell commands, and mutating HTTP methods. After such a denial, retry the exact call with \`sandbox_permissions: "workspace-write"\` and a one-sentence \`justification\` only when the mutation is necessary; approval applies to that call alone. DSH \`workspace-write\` and \`danger-full-access\` are equivalent for this bridge because the OpenKapsel token remains the remote authority boundary. Never print or commit the control token.`,
+      text: `OpenKapsel workspace access is available through the \`kapsel_*\` tools. When a user supplies an OpenKapsel workspace URL and control token, call \`kapsel_config\` once to initialize it, then operate the remote workspace through the typed tools or \`kapsel_http\`. Use \`kapsel_plan_update\` for Plan updates and completion; its typed debrief avoids ambiguous generic request fields. After Plan completion it is immutable; create a new Plan for any later task and revise existing Memory under that new active Plan. When runtime Discovery advertises atomic_subplans, create a parent and direct children in one kapsel_http POST context call using subplans and a stable request_id inside json; use the returned child IDs for later operations. The authoritative REST contract is the vendored \`${SKILL_NAME}\` skill — load it with the \`skill\` tool before nontrivial operations. For RPC, call \`kapsel_rpc\` without \`mapping_id\` to target the server workspace, or provide \`mapping_id\` to target a client mapping; server-capable families come from Discovery and mapping operation schemas come from \`kapsel_mapping_list\`. On RPC-first servers, online=true with mounted=false is normal: use file/RPC tools without mounting. Keep Shell target=auto unless server execution is intended; declare extra server native dependencies with mount_mappings, and FastAPI dependencies in api/mappings.json. For unsandboxed Shell use kapsel_shell_request_approval with an explicit server/Mapping target and reason, show the approval_url, and only after Workspace Password approval use kapsel_shell_exec with approved=true. For function-owned approvals use kapsel_function_request_approval with an explicit registered function, target, args, and reason; show its approval_url before attempting a separately approved operation. For extra File access use kapsel_files_request_approval with access=read|write and explicit target, then use kapsel_http with approved=true and matching target. Remote approval and DSH local write approval are separate; the plugin supplies writer_nonce and Plan Context. Use kapsel_fs_find for indexed filename/glob searches and sorting. Never automatically replay a Shell/RPC write after a timeout, cancellation, or lost response; inspect existing tasks and affected paths first. Check unavailable_mappings and truncated query results before claiming a search is complete. DSH \`read-only\` mode permits remote reads but denies remote writes, edits, Shell commands, and mutating HTTP methods. After such a denial, retry the exact call with \`sandbox_permissions: "workspace-write"\` and a one-sentence \`justification\` only when the mutation is necessary; approval applies to that call alone. DSH \`workspace-write\` and \`danger-full-access\` are equivalent for this bridge because the OpenKapsel token remains the remote authority boundary. Never print or commit the control token.`,
     });
   }
 
