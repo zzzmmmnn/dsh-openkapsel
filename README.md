@@ -247,9 +247,15 @@ To check automatic mode registration against an installed DSH 0.2 host, set
 DSH_RUNTIME_PACKAGE="$(npm root -g)/@deepseek-ai/dsh/package.json" node --test tests/runtime.test.js
 ```
 
-The test uses a fresh temporary profile and the host's real plugin loader.
-It checks mode discovery, tool activation, and isolation from Standard mode
-without starting a Web server or contacting a model or OpenKapsel workspace.
+The test uses a fresh temporary profile, the host's real plugin loader and
+Shell executor, and a local mock workspace. It checks mode discovery,
+isolation from Standard mode, successful `kapsel_config` initialization,
+Python error propagation, and a subsequent file listing. No model or external
+OpenKapsel workspace is contacted.
+
+Version 0.9.6 uses the DSH 0.2 Shell process-handle API
+(`execute(spec)` followed by `result()`) for both Python helpers. The legacy
+`run(spec)` API remains supported for older explicit integrations.
 
 ## Operational notes
 

@@ -29,21 +29,23 @@ function fixture(t, config = {}, mode = 'workspace-write', response) {
   const ctx = {
     shell: {
       resolve: spec => spec,
-      async run(spec) {
-        const { args } = JSON.parse(spec.stdin);
-        const value = name => args.includes(name) ? args[args.indexOf(name) + 1] : undefined;
-        const call = { method: args[0], endpoint: args[1], body: value('--json') ? JSON.parse(value('--json')) : undefined,
-          timeout: value('--timeout'), plan: value('--plan-id'), taskname: value('--taskname'), message: value('--message'), spec };
-        calls.push(call);
-        if (failure) {
-          if (failure instanceof Error) throw failure;
-          return { exitCode: 1, stderr: { text: failure }, stdout: { text: '' } };
-        }
-        const result = call.endpoint === 'conversation' ? (call.method === 'GET' ? { next_conversation_id: 0 } : { conversation_id: 0, writer_nonce: '@Ab12@' }) : response ?? (call.endpoint === 'context' ? (call.method === 'GET' ? { entries: [{ id: 7, taskname: 'test' }] } : { id: 7 })
-          : call.endpoint === '/' ? serverDiscovery
-          : call.endpoint === 'mapping' ? { mappings: [mapping] }
-          : call.endpoint === 'fs/query/grep' ? partial : { task_id: 'task_test', location: 'server' });
-        return { exitCode: 0, stdout: { text: JSON.stringify(result) } };
+      async execute(spec) {
+        return { result: async () => {
+          const { args } = JSON.parse(spec.stdin);
+          const value = name => args.includes(name) ? args[args.indexOf(name) + 1] : undefined;
+          const call = { method: args[0], endpoint: args[1], body: value('--json') ? JSON.parse(value('--json')) : undefined,
+            timeout: value('--timeout'), plan: value('--plan-id'), taskname: value('--taskname'), message: value('--message'), spec };
+          calls.push(call);
+          if (failure) {
+            if (failure instanceof Error) throw failure;
+            return { exitCode: 1, stderr: { text: failure }, stdout: { text: '' } };
+          }
+          const result = call.endpoint === 'conversation' ? (call.method === 'GET' ? { next_conversation_id: 0 } : { conversation_id: 0, writer_nonce: '@Ab12@' }) : response ?? (call.endpoint === 'context' ? (call.method === 'GET' ? { entries: [{ id: 7, taskname: 'test' }] } : { id: 7 })
+            : call.endpoint === '/' ? serverDiscovery
+            : call.endpoint === 'mapping' ? { mappings: [mapping] }
+            : call.endpoint === 'fs/query/grep' ? partial : { task_id: 'task_test', location: 'server' });
+          return { exitCode: 0, stdout: { text: JSON.stringify(result) } };
+        } };
       },
     },
     sandboxPolicy: { resolve: () => ({ mode }) },

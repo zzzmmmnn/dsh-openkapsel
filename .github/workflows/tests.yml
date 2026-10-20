@@ -36,8 +36,11 @@ jobs:
         with:
           node-version: '22'
           cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
       - run: npm ci --ignore-scripts
       - name: Install the DSH host used by the mode registration test
         run: npm install --prefix "$RUNNER_TEMP/dsh-runtime" --ignore-scripts @deepseek-ai/dsh@${{ matrix.dsh }}
-      - name: Check registration in a clean DSH profile
+      - name: Check registration and helper execution in a clean DSH profile
         run: DSH_RUNTIME_PACKAGE="$RUNNER_TEMP/dsh-runtime/node_modules/@deepseek-ai/dsh/package.json" node --test tests/runtime.test.js

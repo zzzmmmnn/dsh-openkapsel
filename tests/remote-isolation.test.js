@@ -20,9 +20,9 @@ function fakeShell(specs) {
     resolve(spec) {
       return spec;
     },
-    run(spec) {
+    async execute(spec) {
       specs.push(spec);
-      return new Promise((resolve) => {
+      const result = new Promise((resolve) => {
         const child = execCommand(spec.command, {
           shell: process.platform === 'win32' ? 'pwsh.exe' : '/bin/bash',
           cwd: spec.workdir,
@@ -41,6 +41,7 @@ function fakeShell(specs) {
         child.stdin.on('error', () => {});
         child.stdin.end(spec.stdin);
       });
+      return { result: () => result };
     },
   };
 }

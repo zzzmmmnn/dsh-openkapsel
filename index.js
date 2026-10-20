@@ -224,20 +224,23 @@ export function apply(ctx, config = {}) {
   /** Run a Python helper, capturing stdout; throws on non-zero exit. */
   async function runPython(argvTail, { script, workdir, sessionId, timeoutMs, stdoutMaxBytes, signal } = {}) {
     const transport = helperTransport(script, argvTail);
-    const result = await shell.run(
-      shell.resolve({
-        ...transport,
-        workdir,
-        timeoutMs,
-        stdoutMaxBytes: stdoutMaxBytes ?? 4_000_000,
-        signal,
-        sandboxPolicy: {
-          mode: 'workspace-write',
-          workspaceRoot: workdir,
-          ...(sessionId ? { sessionId } : {}),
-        },
-      }),
-    );
+    const spec = shell.resolve({
+      ...transport,
+      workdir,
+      timeoutMs,
+      stdoutMaxBytes: stdoutMaxBytes ?? 4_000_000,
+      signal,
+      sandboxPolicy: {
+        mode: 'workspace-write',
+        workspaceRoot: workdir,
+        ...(sessionId ? { sessionId } : {}),
+      },
+    });
+    // DSH 0.2 returns a process handle; await its foreground result. Keep
+    // the old seam for explicit legacy integrations using the file installer.
+    const result = typeof shell.execute === 'function'
+      ? await (await shell.execute(spec)).result()
+      : await shell.run(spec);
     if (result.exitCode !== 0) {
       const detail = (result.stderr?.text ?? '').trim() || (result.stdout?.text ?? '').trim();
       throw new Error(`openkapsel: ${detail || `python helper exited ${result.exitCode}`}`);

@@ -1,5 +1,5 @@
 // Opt in with DSH_RUNTIME_PACKAGE=/absolute/path/to/@deepseek-ai/dsh/package.json.
-// Uses the installed DSH loader, without a Web server, model or remote workspace.
+// Uses the installed DSH loader and Shell executor against a local mock workspace.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -7,17 +7,22 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 
-test('a clean DSH profile discovers and activates the packaged remote mode', {
+test('a clean DSH profile loads the remote mode and initializes through the real Shell executor', {
   skip: !process.env.DSH_RUNTIME_PACKAGE, timeout: 60_000,
 }, async t => {
   const installAnchor = resolve(process.env.DSH_RUNTIME_PACKAGE);
   const temporary = mkdtempSync(join(tmpdir(), 'dsh-kapsel-runtime-'));
   const previousHome = process.env.DSH_HOME;
   process.env.DSH_HOME = temporary;
-  let ctx;
+  let ctx, workspace;
   t.after(async () => {
-    try { await ctx?.fiber.dispose(); }
+    try {
+      if (workspace?.listening) await new Promise(resolve => workspace.close(resolve));
+      await ctx?.fiber.dispose();
+    }
     finally {
       if (previousHome === undefined) delete process.env.DSH_HOME;
       else process.env.DSH_HOME = previousHome;
@@ -79,4 +84,33 @@ test('a clean DSH profile discovers and activates the packaged remote mode', {
   const standardScope = createScope(ctx, standardKey);
   await registry.mount(standardScope.ctx, 'standard');
   assert.ok(!tools.schemas(standardKey).some(tool => tool.name.startsWith('kapsel_')));
+
+  // Loading schemas alone does not exercise the host Shell API. Execute both
+  // fixed Python helpers through the real host, without model/server credentials.
+  const requests = [];
+  workspace = createServer((request, response) => {
+    requests.push(request.url);
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify(request.url.includes('/fs/query/list')
+      ? { entries: [{ name: 'runtime.txt' }] }
+      : { name: 'Runtime workspace', capabilities: { files: { read: true } },
+        authentication: { credentials_expires_at: new Date(Date.now() + 3 * 86400000).toISOString() } }));
+  });
+  workspace.listen(0, '127.0.0.1');
+  await once(workspace, 'listening');
+  const session = ctx.get('sessions').create(undefined, { meta: { cwd: temporary, agentPreset: 'kapsel' } });
+  const exec = { agent: { id: session.id, session, ctx: remoteScope.ctx }, signal: new AbortController().signal };
+  const configure = tools.get('kapsel_config', remoteKey);
+  await assert.rejects(configure.execute({ workspace_url: 'invalid', control_token: 'test-control', create_plan: false }, exec), /openkapsel:/);
+  const configured = await configure.execute({
+    workspace_url: `http://127.0.0.1:${workspace.address().port}/w/read_runtime`,
+    control_token: 'test-control', create_plan: false,
+  }, exec);
+  assert.equal(configured.config.action, 'created');
+  assert.equal(configured.workspace.name, 'Runtime workspace');
+  assert.equal(configured.dsh_sandbox_mode, 'workspace-write');
+  const listed = await tools.get('kapsel_fs_list', remoteKey).execute({ path: '.' }, exec);
+  assert.deepEqual(listed.entries, [{ name: 'runtime.txt' }]);
+  assert.ok(requests.some(url => url.includes('/fs/query/list')));
+  assert.equal(existsSync(join(temporary, '.openkapsel.env')), false);
 });
