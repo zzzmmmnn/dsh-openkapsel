@@ -2,7 +2,20 @@
 
 Read `GET /discovery/files` first when server-specific limits or availability matter.
 
-For other functions with registered approval support, use `POST /function/approval/request` with `function`, exact `target`, function-specific `args`, `reason`, owning `plan_id` and `writer_nonce`. The approval response does not execute the function; display its `approval_url` and await confirmation before sending a separately approved operation. Legacy `/shell/approval/request` and `/files/approval/request` continue to work. Neither generic nor legacy approvals override explicit sandbox `ro` or `deny` path rules.
+For other functions with registered approval support, use `POST /function/approval/request` with `function`, exact `target`, function-specific `args`, `reason`, owning `plan_id` and `writer_nonce`. The approval response does not execute the function; display its `approval_url` and await confirmation before sending a separately approved operation. Legacy `/shell/approval/request` and `/files/approval/request` continue to work.
+
+Modes are `rw`, `ro`, `protect`, `deny`. Absolute `deny` at
+any ancestor cannot be bypassed by child configuration or File Approval.
+Otherwise deepest path wins; same-path ties use
+`deny > protect > ro > rw`. `protect` blocks ordinary reads/writes, but
+a separately confirmed `files.read`/`files.write` Approval for its exact
+directory or a narrower canonical child unlocks only the requested subtree.
+An ancestor Approval never opens nested `protect`; previously approved
+child scopes remain independent. `files.write` elevates ordinary `ro`
+within its scope, using `approved=true`, matching `target`,
+`writer_nonce`, Token and active Plan. Mapping-wide write protection,
+hard Client configuration/metadata, and OS permissions remain enforced;
+File Approval does not grant Shell or Git RPC access.
 
 For parsed configuration edits or table queries, use the optional [structured/tabular RPC families](data-rpc.md) instead of reading an entire binary or multi-gigabyte CSV through text APIs.
 
