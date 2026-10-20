@@ -1,4 +1,39 @@
-# Expose the preset without changing the current/default agent.
+# Register the mode with the DSH 0.2+ preset registry.
+# Tools and the remote-only guard stay inside this preset.
 - insert:
-    - id: openkapsel-preset-bootstrap
-      name: dsh-openkapsel/bundle
+    - id: preset-openkapsel
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: kapsel
+        name: OpenKapsel Remote
+        description: Operate a remote OpenKapsel workspace through file, Shell, and REST tools.
+        order: 5
+        plugins:
+          # OpenKapsel-only agent preset. It intentionally contains no host filesystem,
+          # host shell, local instruction discovery, or local skill discovery provider.
+
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: >-
+                You are a remote workspace agent. All project file access, edits, searches,
+                and shell commands must use the OpenKapsel kapsel_* tools. The DSH host's
+                local working directory is not the project and must not be inspected or
+                modified.
+
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+
+          - id: tool-kapsel
+            name: 'dsh-openkapsel'
+            config:
+              taskname: dsh
+              enforceRemoteOnly: true

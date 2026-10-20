@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { installPreset } from '../preset-install.js';
+import { load } from 'js-yaml';
 
 function home(t) {
   const dir = mkdtempSync(join(tmpdir(), 'kapsel-bundle-'));
@@ -13,13 +14,19 @@ function home(t) {
   return dir;
 }
 
-test('bundle exposes bootstrap, not profile-global remote tools', () => {
+test('bundle declares a selectable preset with the canonical remote composition', () => {
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url)));
   assert.equal(pkg.dsh.bundle.patch, './cordis.patch.yml');
   assert.equal(pkg.exports['./bundle'], './bundle.js');
-  const patch = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8');
-  assert.match(patch, /name: dsh-openkapsel\/bundle/);
-  assert.doesNotMatch(patch, /enforceRemoteOnly|name: dsh-openkapsel\s*$/m);
+  const patch = load(readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8'));
+  const metadata = load(readFileSync(new URL('../preset/kapsel/preset.yml', import.meta.url), 'utf8'));
+  const plugins = load(readFileSync(new URL('../preset/kapsel/agent.cordis.yml', import.meta.url), 'utf8'));
+  assert.deepEqual(patch, [{ insert: [{
+    id: 'preset-openkapsel', name: '@deepseek-ai/dsh-agent-preset',
+    config: { id: 'kapsel', ...metadata, plugins },
+  }] }]);
+  // No profile-global bridge/guard or default-mode override is installed.
+  assert.equal(patch[0].insert[0].config.plugins.at(-1).config.enforceRemoteOnly, true);
 });
 
 test('fresh installation is idempotent and adopts identical manual installs', t => {

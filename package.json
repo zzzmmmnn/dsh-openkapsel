@@ -1,6 +1,6 @@
 {
   "name": "dsh-openkapsel",
-  "version": "0.9.4",
+  "version": "0.9.5",
   "description": "OpenKapsel workspace bridge for the DeepSeek Harness: operate a remote OpenKapsel workspace (files, shell, context, memory, sharing, preview) through skill-driven tool calls using only its workspace URL and control token.",
   "type": "module",
   "main": "index.js",
@@ -68,6 +68,7 @@
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.2",
     "@deepseek-ai/dsh-sandbox": "0.1.2-rc.1",
-    "@deepseek-ai/dsh-tools": "0.1.2-rc.1"
+    "@deepseek-ai/dsh-tools": "0.1.2-rc.1",
+    "js-yaml": "4.3.2"
   }
 }

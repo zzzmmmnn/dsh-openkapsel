@@ -24,7 +24,7 @@ directory; the executor also controls any platform temporary-directory access.
 
 | Area | Requirements and scope |
 |---|---|
-| DSH | Tested with DSH `0.1.2-rc.1`, the `web` profile, and the bundled **OpenKapsel Remote** preset. The preset's persona field was updated for DSH `0.1.5-rc.2`; an existing session's command picker was confirmed working after the update. Other profiles are not verified. |
+| DSH | Automatic mode registration requires DSH `0.2.0-rc.2` or newer with the declarative preset registry. Registration and tool activation are verified against `0.2.0-rc.2` and `0.2.1-rc.2` with the `web` profile. The legacy file installer is retained for older DSH versions. Other profiles are not verified. |
 | Node.js | Package declares `>=18`; the test matrix covers Node.js 22 and 24. Use a version supported by your DSH installation; Node.js 18 is not covered by this project's CI. |
 | Python | Python 3.10+ on the Host's `PATH`: `python` on Windows, `python3` on macOS/Linux. The test matrix covers 3.10 and 3.14. |
 | Host platform | macOS/Linux use DSH's Bash executor; Windows uses DSH's PowerShell executor without Bash. GitHub installation and Host startup verified on macOS. Windows installation and actual plugin use confirmed by user testing (2026-09-09). Linux/Windows automated tests are configured in CI. |
@@ -50,12 +50,12 @@ Requires `python` on Windows or `python3` on macOS/Linux on `PATH`.
 
 ```text
 index.js                Host-side Cordis plugin and typed remote tools
-bundle.js               Profile bootstrap that installs only the preset
-cordis.patch.yml        DSH bundle entry point (no global tool guard)
-preset-install.js       Shared, update-safe preset installer
+bundle.js               Legacy preset-copy bootstrap for pre-0.2 DSH
+cordis.patch.yml        Declarative OpenKapsel mode registration
+preset-install.js       Legacy, update-safe preset file installer
 skill/openkapsel-rest/  Vendored REST skill and fixed Python helpers
-preset/kapsel/          Remote-only agent preset shown in DSH's mode picker
-bin/install-preset.js   Installs the preset into the DSH user preset root
+preset/kapsel/          Canonical remote composition and legacy mode files
+bin/install-preset.js   Copies mode files for older DSH installations
 cordis.example.yml      Annotated bridge row
 tests/                  Tool-catalog and remote-isolation tests
 ```
@@ -69,47 +69,34 @@ dsh plugin --profile web add github:zzzmmmnn/dsh-openkapsel
 ```
 
 No manual symlink or local source checkout is required. DSH manages the package
-as a profile dependency. Its `dsh.bundle` patch loads a lightweight bootstrap
-when the profile starts. The bootstrap installs the OpenKapsel Remote preset;
-it does not register tools, enable the remote-only guard, or change the default
-preset. Tools and the guard load only when you select OpenKapsel Remote.
+as a profile dependency. Its `dsh.bundle` patch declares **OpenKapsel Remote**
+through `@deepseek-ai/dsh-agent-preset`. The bridge and its remote-only guard
+belong to that mode; the default `standard` mode is unchanged.
 
-Untouched package-managed presets update automatically on startup. Existing
-identical manual installations are adopted. Locally modified presets are
-preserved and reported instead of overwritten. To explicitly replace one:
+Restart DSH after installing or updating. Create a new session and select
+**OpenKapsel Remote**, then supply the workspace URL and matching control token
+through `kapsel_config`. Existing non-empty sessions keep their selected mode.
+The current DSH registry eagerly validates mode compositions, so tools can be
+registered at startup while remaining visible only within the selected mode.
 
-```bash
-dsh plugin --profile web exec dsh-openkapsel-install-preset --force
-```
+Version 0.9.5 fixes mode discovery on DSH 0.2. Copying files into
+`$DSH_HOME/.agent-presets/kapsel` alone no longer registers a mode. No manual
+profile patch or preset-copy command is needed with the new bundle. If you
+previously added a `preset-openkapsel` declaration to your profile as a
+workaround, remove that declaration when upgrading: the bundle now owns it.
+Preserve any custom mode configuration by applying it as an override of the
+bundle's `preset-openkapsel` row rather than adding a second declaration.
 
-The target is `$DSH_HOME/.agent-presets/kapsel`, or
-`~/.dsh/.agent-presets/kapsel` when `DSH_HOME` is unset. Restart DSH. New sessions can then
-select **OpenKapsel Remote** beside the shipped modes. Existing non-empty
-sessions keep their original preset. Supply your OpenKapsel Workspace URL and
-matching control token through `kapsel_config` to connect the remote workspace.
+### Legacy DSH installations
 
-The installer command without `--force` remains available for manual setup.
-Removing the package does not delete the copied preset or session credentials.
-After uninstalling, remove `$DSH_HOME/.agent-presets/kapsel` if no other profile
-uses it. The preset root is shared by profiles using the same `DSH_HOME`.
-
-Version 0.7.1 changes the bundled preset's persona field from `text` to
-`prefix`, as required by DSH `0.1.5-rc.2`. The old field can prevent existing
-OpenKapsel sessions from mounting after a DSH upgrade. Restart DSH after
-updating the plugin so the bootstrap can refresh an untouched installed preset;
-if you customized that preset, use the `--force` installer command above only
-when you intend to replace your changes.
-
-Version 0.7.0's packed bundle was installed into a fresh temporary DSH profile
-on macOS: profile composition, Web Host startup, and automatic preset creation
-passed without changing the default `standard` preset. The new bootstrap also
-has automated installation, update, customization-preservation, and isolation tests.
-
-The earlier GitHub installation and profile-scoped installer were verified locally;
-the installed package passed its tests and the DSH web Host started
-successfully on macOS. Windows installation and actual plugin use were also
-confirmed by user testing on 2026-09-09. On Windows, run these same commands from PowerShell;
-ensure `python --version` resolves to Python 3.10 or newer. Bash is not required.
+For pre-0.2 installations that discover file-based presets, the explicit
+`dsh-openkapsel-install-preset` command and `dsh-openkapsel/bundle` export remain
+available. They copy to `$DSH_HOME/.agent-presets/kapsel` (default
+`~/.dsh/.agent-presets/kapsel`) and preserve locally modified files. Use
+`dsh plugin --profile web exec dsh-openkapsel-install-preset --force` only to
+intentionally replace those files. Older hosts need their legacy profile
+integration; the current automatic bundle targets the declarative registry.
+Uninstalling the package does not delete legacy files or session credentials.
 
 ## Remote-only preset
 
@@ -251,6 +238,18 @@ remain stable.
 Run `npm ci` and `npm test`. GitHub Actions checks Node.js 22/24 with Python
 3.10/3.14 on Linux and Windows, including helper argument round-trip and remote
 permission tests.
+
+To check automatic mode registration against an installed DSH 0.2 host, set
+`DSH_RUNTIME_PACKAGE` to that installation's `package.json` and run
+`node --test tests/runtime.test.js`. For example, on macOS/Linux:
+
+```bash
+DSH_RUNTIME_PACKAGE="$(npm root -g)/@deepseek-ai/dsh/package.json" node --test tests/runtime.test.js
+```
+
+The test uses a fresh temporary profile and the host's real plugin loader.
+It checks mode discovery, tool activation, and isolation from Standard mode
+without starting a Web server or contacting a model or OpenKapsel workspace.
 
 ## Operational notes
 
