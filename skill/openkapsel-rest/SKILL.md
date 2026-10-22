@@ -1,6 +1,6 @@
 ---
 name: openkapsel-rest
-description: Operate an OpenKapsel workspace through its REST, raw-transfer, sharing, preview, and FastAPI HTTP surfaces. Use when a task provides an OpenKapsel workspace URL or asks to inspect files, modify a workspace, manage Context or Memory, run or schedule Shell tasks, transfer data, share content, or test a workspace web app; this skill covers neither MCP nor administrator operations.
+description: Operate an OpenKapsel workspace through its REST, raw-transfer, preview, and FastAPI HTTP surfaces. Use when a task provides an OpenKapsel workspace URL or asks to inspect files, modify a workspace, manage Context or Memory, run or schedule Shell tasks, transfer data or test a workspace web app; this skill covers neither MCP nor administrator operations.
 ---
 
 # OpenKapsel REST
@@ -33,9 +33,9 @@ For directory-scoped credentials, the helpers cache the published expiration in 
 
 ## Operating rules
 
-1. Fetch `GET /` once. It is the shared preamble for authentication, token, Skill, endpoint defaults, and Discovery navigation; detailed permissions and limits live in the relevant section. Add the matching Bearer token when privileged availability matters. If the host cannot change the URL path, HTTP method, or Authorization header, load `discovery/transport` and follow [references/request-transport.md](references/request-transport.md); otherwise prefer ordinary REST requests.
+1. Fetch `GET /` once. It is the shared preamble for authentication, token, Skill, endpoint defaults, and Discovery navigation; detailed permissions and limits live in the relevant section. Add the matching Bearer token when privileged availability matters. If the host cannot change the URL path, HTTP method, or Authorization header, load `discovery/restricted_http` and follow [references/restricted-http.md](references/restricted-http.md); otherwise prefer ordinary REST requests.
 2. For any workspace mutation, load the three core sections `discovery/context`, `discovery/memory`, and `discovery/files`; Context covers both Conversation and Plan. For read-only work, load only the relevant section. Section documents inherit the main preamble and do not repeat it. Avoid `discovery/full` unless auditing compatibility across the entire server.
-3. Before changing workspace state, query for a suitable active root Plan or create one. Every ordinary modifying endpoint requires `plan_id`, `taskname`, and `message`. When the task already has distinct parts, prefer one plan creation with `subplans` and a stable `request_id`; see the Context reference and runtime Discovery for support. Configure persistent Shell variables or POSIX initialization through `/env`, not the local credential file.
+3. Before changing workspace state, query for a suitable active root Plan or create one. Every ordinary modifying endpoint requires `plan_id`, `taskname`, and `message`. For multi-step work, create a concrete executable `todos` checklist in the Plan (inspect relevant code, implement, test, verify), not only major milestones; update each child Plan as the step is completed. Use a stable `request_id`; see the Context reference and runtime Discovery for support. Configure persistent Shell variables or POSIX initialization through `/env`, not the local credential file.
 4. Keep `taskname` stable for one task and messages brief. Ordinary reads should omit Context fields unless recording the read is genuinely useful.
 5. Use ETags for concurrent text or Memory updates. For several exact edits in one or more files, prefer the replace-only batch endpoint so every rule is checked against original text before publication. Binary destinations are create-only: recycle an existing file before uploading its replacement.
 6. On completion, update the Plan with a debrief. Each `items[]` entry directly creates one new Memory from short `content` plus tags; use `items: []` when there is no new durable fact. `memory_actions` is only for updating or archiving existing Memory.
@@ -53,14 +53,13 @@ client setting rpc.file has been removed; see the mappings reference.
 ## Route to the needed reference
 
 - For credentials, Discovery, errors, request helpers, and raw transfer aliases, read [references/api-basics.md](references/api-basics.md).
-- For fixed-path or GET-only hosts, `req` routing, signed GET envelopes, HMAC construction, nonce replay rules, and `body` limits, read [references/request-transport.md](references/request-transport.md).
+- For fixed-path or GET-only hosts, `req` routing, signed GET envelopes, HMAC construction, nonce replay rules, and `body` limits, read [references/restricted-http.md](references/restricted-http.md).
 - For file listing, reading, metadata, search, trees, text edits, recycle, direct binary transfer, and resumable uploads, read [references/files.md](references/files.md).
 - For operation history, hierarchical Plans, Notes, mutation attribution, and Plan completion, read [references/context.md](references/context.md).
 - For durable project knowledge, revision checks, path, tags, and Memory actions, read [references/memory.md](references/memory.md).
 - For Git inspection, persistent Shell environments, tasks, output polling or SSE, interactive stdin, interruption, force-kill, and process inspection, read [references/shell.md](references/shell.md).
 - For persistent once, interval, or six-field cron Shell schedules and their run history, read [references/schedules.md](references/schedules.md).
 - For static preview and workspace FastAPI applications, read [references/web-and-apps.md](references/web-and-apps.md).
-- For temporary cross-workspace transfer by share ID, read [references/sharing.md](references/sharing.md).
 - For client-backed mapped directories, RPC plugins, archive preview, cross-root copying/moving, and tasks executed on a client machine, read [references/mappings.md](references/mappings.md).
 - For JSON/YAML/TOML reads and conditional edits, and read-only CSV/Excel pages or large-file scans, read [references/data-rpc.md](references/data-rpc.md).
 - For client-local SSH profiles, reusable SSH connections, remote command tasks, and SFTP transfer, read [references/ssh-rpc.md](references/ssh-rpc.md).

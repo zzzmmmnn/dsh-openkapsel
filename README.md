@@ -176,7 +176,7 @@ publishes none. Mount it in the dedicated agent preset, not globally.
 | `kapsel_rpc` | Unified server/mapping RPC entry: omit `mapping_id` for the server workspace or provide it for a client mapping; sync returns directly, task returns a normal server or unified client task id; writes use DSH approval + Plan/Context and mapped writes require a writable mapping |
 | `kapsel_fs_copy` / `kapsel_fs_move` / `kapsel_transfer` | Copy or move across workspace and client storage, then inspect/cancel/resume asynchronous transfers |
 | `kapsel_recycle` | List, restore, or explicitly purge an item in the selected storage root |
-| `kapsel_http` | Context, Memory, sharing, preview, schedules, and other REST surfaces |
+| `kapsel_http` | Context, Memory, preview, schedules, and other REST surfaces |
 
 For client mappings, first call `kapsel_mapping_list` and inspect the client's reported platform and sandbox mode. Shell execution uses `kapsel_shell_exec`; a mapped `cwd` with `target: "auto"` runs on that client and returns a unified task ID. Inspect output with `kapsel_task_output`, and use `kapsel_http` with the ordinary `/task/*` lifecycle for status, stdin, interrupt, or kill. Mapping-specific public task/argv REST endpoints are not exposed. An unsandboxed client task has that client's OS-account permissions.
 
@@ -263,7 +263,7 @@ Version 0.9.6 uses the DSH 0.2 Shell process-handle API
   Unix mode `0600` (Windows uses inherited directory ACLs). Neither the token nor its host-private path is returned in tool
   results.
 - The read token in the workspace URL is read-only; the control token unlocks
-  writes, Shell, Context, Memory, and sharing.
+  writes, Shell, Context, and Memory.
 - Every mutation is attributed to an active Plan with a `taskname` and
   `message`.
 - Tokens go only to the workspace origin or documented transfer paths, never to
@@ -494,10 +494,10 @@ The DSH bridge creates a Conversation when needed for automatic Plan management.
 
 ## Atomic plan batches
 
-On a server advertising `capabilities.context.plan_creation.atomic_subplans`,
+On a server advertising `capabilities.context.plan_creation.atomic_todos`,
 use `kapsel_http` once with `method: "POST"`, `endpoint: "context"` and `json`
 containing `type: "plan"`, `taskname`, `content`, optional `request_id`, and
-`subplans: [{"ref":"code","content":"Implement"},{"ref":"tests","content":"Verify"}]`.
+`todos: [{"ref":"code","content":"Implement"},{"ref":"tests","content":"Verify"}]`.
 The response returns the parent `id` and every child's `id`/`plan_id`/`ref`.
 Pass a returned child ID to subsequent mutation tools; no extra Plan creation is
 necessary. Do not put endpoint fields beside `json`.

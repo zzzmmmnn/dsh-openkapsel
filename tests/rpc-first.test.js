@@ -209,25 +209,38 @@ test('bundled skill and prompt teach unified server and mapping RPC usage', t =>
 
 
 test('atomic Plan requests and all returned child IDs pass through in one call', async t => {
-  const receipt = { id: 20, request_id: 'feature-01', replayed: false, subplans: [
+  const receipt = { id: 20, request_id: 'feature-01', replayed: false, todos: [
     { index: 0, ref: 'code', id: 21, plan_id: 20 }, { index: 1, ref: 'tests', id: 22, plan_id: 20 },
   ] };
   const f = fixture(t, {}, 'workspace-write', receipt);
   const json = { type: 'plan', taskname: 'feature', content: 'Implement', request_id: 'feature-01',
-    subplans: [{ ref: 'code', content: 'Code' }, { ref: 'tests', content: 'Verify' }], conversation_id: 0, writer_nonce: '@Ab12@', conversation_entries: [{ role: 'ai', content: 'Start feature.' }] };
+    todos: [{ ref: 'code', content: 'Code' }, { ref: 'tests', content: 'Verify' }], conversation_id: 0, writer_nonce: '@Ab12@', conversation_entries: [{ role: 'ai', content: 'Start feature.' }] };
   const result = await f.tools.get('kapsel_http').execute({ method: 'POST', endpoint: 'context', json }, f.exec);
   assert.deepEqual(result.body, receipt);
   assert.equal(f.calls.length, 1);
   assert.equal(f.calls[0].endpoint, 'context');
   assert.deepEqual(f.calls[0].body, json);
   assert.equal(f.calls[0].plan, undefined);
-  assert.match(f.skills[0].content, /Create a plan and direct subplans in one call/);
-  assert.match(f.prompts.join('\n'), /subplans.*request_id/);
+  assert.match(f.skills[0].content, /Create a Plan and its executable todo checklist/);
+  assert.match(f.prompts.join('\n'), /todos.*request_id/);
+});
+
+test('legacy REST subplans remain pass-through without inventing a todos field', async t => {
+  const receipt = { id: 30, todos: [{ index: 0, id: 31, plan_id: 30 }] };
+  const f = fixture(t, {}, 'workspace-write', receipt);
+  const json = { type: 'plan', taskname: 'legacy', content: 'Maintain REST compatibility',
+    subplans: [{ content: 'Existing caller' }], conversation_id: 0,
+    writer_nonce: '@Ab12@', conversation_entries: [{ role: 'ai', content: 'Legacy REST plan.' }] };
+  const result = await f.tools.get('kapsel_http').execute({ method: 'POST', endpoint: 'context', json }, f.exec);
+  assert.deepEqual(result.body, receipt);
+  assert.equal(f.calls.length, 1);
+  assert.deepEqual(f.calls[0].body, json);
+  assert.equal(Object.hasOwn(f.calls[0].body, 'todos'), false);
 });
 
 test('atomic Plan creation retains approval policy and does not replay failed requests', async t => {
   const args = { method: 'POST', endpoint: 'context', json: { type: 'plan', content: 'Once', taskname: 'feature',
-    request_id: 'feature-02', subplans: [{ ref: 'child', content: 'Child' }], conversation_id: 0, writer_nonce: '@Ab12@', conversation_entries: [{ role: 'ai', content: 'Start feature.' }] } };
+    request_id: 'feature-02', todos: [{ ref: 'child', content: 'Child' }], conversation_id: 0, writer_nonce: '@Ab12@', conversation_entries: [{ role: 'ai', content: 'Start feature.' }] } };
   const denied = fixture(t, {}, 'read-only');
   await assert.rejects(denied.tools.get('kapsel_http').execute(args, denied.exec), /read-only/);
   assert.equal(denied.calls.length, 0);
@@ -253,7 +266,7 @@ test('automatic Plan creation bootstraps Conversation and retains returned write
   assert.equal(f.calls[2].body.conversation_id, 0);
   assert.equal(f.calls[2].body.writer_nonce, '@Ab12@');
   assert.equal(f.calls[2].body.conversation_entries[0].role, 'ai');
-  assert.deepEqual(f.calls[2].body.subplans, []);
+  assert.deepEqual(f.calls[2].body.todos, []);
 });
 
 test('typed Plan updates require revisions, have immutable parentage, and append Conversation', async t => {
@@ -272,7 +285,7 @@ test('typed Plan updates require revisions, have immutable parentage, and append
   assert.equal(body.writer_nonce, '@Ab12@');
   assert.equal(body.conversation_entries[0].role, 'ai');
   assert.equal(body.plan_id, undefined);
-  assert.match(f.skills[0].content, /request-transport.md/);
+  assert.match(f.skills[0].content, /restricted-http.md/);
 });
 
 test('closing the session Plan clears the cached Plan for typed and generic updates', async t => {

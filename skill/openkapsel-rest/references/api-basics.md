@@ -5,7 +5,7 @@
 Normalize `workspace_url` by removing its trailing slash. Workspace endpoints are relative to it.
 
 - The read token embedded in `workspace_url` authenticates read-only file and Discovery access.
-- Send `Authorization: Bearer <CONTROL_TOKEN>` for privileged Discovery, Context, Memory, mutations, uploads, sharing changes, Shell, and task control.
+- Send `Authorization: Bearer <CONTROL_TOKEN>` for privileged Discovery, Context, Memory, mutations, uploads, Shell, and task control.
 - The Bearer token must belong to the same record as the URL token. Missing/invalid credentials normally return `401`; a valid control token bound to another workspace URL returns `403`.
 - A preview token is independent. Never substitute it for either workspace credential.
 - `GET <workspace_url>/` never echoes the control token.
@@ -14,11 +14,11 @@ Use the control token only on the workspace origin or a documented control-authe
 
 Control tokens do not sign in to administration. Interactive browser consent on the configured OpenKapsel service origin is a separate user-driven workflow; these REST helpers do not submit credentials to browser forms or follow client callback redirects. Never place a control token in a URL or request log.
 
-The workspace-relative `.openkapsel` directory is reserved private runtime state. File, preview, sharing, application-worker, and restricted-Shell surfaces do not expose it. Use the dedicated recycle, Context, Memory, database-runtime, and environment interfaces instead.
+The workspace-relative `.openkapsel` directory is reserved private runtime state. File, preview, application-worker, and restricted-Shell surfaces do not expose it. Use the dedicated recycle, Context, Memory, database-runtime, and environment interfaces instead.
 
-## GET-only transport fallback
+## Restricted HTTP clients
 
-When an AI host cannot change the Workspace URL path, HTTP method, or Authorization header, load `GET <workspace_url>/discovery/transport` and follow [request-transport.md](request-transport.md). That dedicated document is the only detailed wire-format reference; prefer ordinary REST whenever the host supports it.
+When an AI host cannot change the Workspace URL path, HTTP method, or Authorization header, load `GET <workspace_url>/discovery/restricted_http` and follow [restricted-http.md](restricted-http.md). That dedicated document is the only detailed wire-format reference; prefer ordinary REST whenever the host supports it.
 
 ## Directory-scoped configuration and renewal
 
@@ -38,7 +38,7 @@ Directory-scoped helpers discover and cache `OPENKAPSEL_CREDENTIALS_EXPIRES_AT`.
 | Method | Relative path | Purpose |
 |---|---|---|
 | `GET` | `/` | Compact capability index and links |
-| `GET` | `/discovery/transport` | GET-only query routing and signed-envelope transport contract |
+| `GET` | `/discovery/restricted_http` | Fallbacks for HTTP clients that cannot set the URL path, HTTP method, or Authorization header, or cannot read non-2xx response bodies |
 | `GET` | `/discovery/files` | File, recycle, and binary transfer contract |
 | `GET` | `/discovery/context` | Context and Plan contract |
 | `GET` | `/discovery/memory` | Long-term Memory contract |
@@ -48,7 +48,6 @@ Directory-scoped helpers discover and cache `OPENKAPSEL_CREDENTIALS_EXPIRES_AT`.
 | `GET` | `/discovery/shell` | Shell, task, process, and resource limits |
 | `GET` | `/discovery/schedules` | Schedule operations and schedule-specific limits |
 | `GET` | `/discovery/web` | Preview, FastAPI, libraries, and database runtime |
-| `GET` | `/discovery/sharing` | Temporary share contract |
 | `GET` | `/discovery/full` | Complete compatibility document; load only when necessary |
 
 Send `Accept: application/json`. Supplying the Bearer token changes capability fields from redacted/read-only to the privileges actually available.

@@ -2,8 +2,6 @@
 
 Read `GET /discovery/files` first when server-specific limits or availability matter.
 
-For other functions with registered approval support, use `POST /function/approval/request` with `function`, exact `target`, function-specific `args`, `reason`, owning `plan_id` and `writer_nonce`. The approval response does not execute the function; display its `approval_url` and await confirmation before sending a separately approved operation. Legacy `/shell/approval/request` and `/files/approval/request` continue to work.
-
 Modes are `rw`, `ro`, `protect`, `deny`. Absolute `deny` at
 any ancestor cannot be bypassed by child configuration or File Approval.
 Otherwise deepest path wins; same-path ties use
