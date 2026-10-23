@@ -10,7 +10,7 @@ Normalize `workspace_url` by removing its trailing slash. Workspace endpoints ar
 - A preview token is independent. Never substitute it for either workspace credential.
 - `GET <workspace_url>/` never echoes the control token.
 
-Use the control token only on the workspace origin or a documented control-authenticated `/transfer/...` URL. Do not forward it to a static preview URL, public share URL, or workspace application's own route. When operating through an authenticated OAuth or Static MCP connection, use `capability_call` with `family=credential, operation=get` to obtain the current portable REST workspace URL/control token and `operation=renew` to rotate that pair inside the normal renewal window; ordinary MCP Discovery does not expose the secret values.
+Use the control token only on the workspace origin. Do not forward it to a static preview URL, unrelated public URL, or workspace application's own route. When operating through an authenticated OAuth or Static MCP connection, use `capability_call` with `family=credential, operation=get` to obtain the current portable REST workspace URL/control token and `operation=renew` to rotate that pair inside the normal renewal window; ordinary MCP Discovery does not expose the secret values.
 
 Control tokens do not sign in to administration. Interactive browser consent on the configured OpenKapsel service origin is a separate user-driven workflow; these REST helpers do not submit credentials to browser forms or follow client callback redirects. Never place a control token in a URL or request log.
 
@@ -52,7 +52,7 @@ Directory-scoped helpers discover and cache `OPENKAPSEL_CREDENTIALS_EXPIRES_AT`.
 
 Send `Accept: application/json`. Supplying the Bearer token changes capability fields from redacted/read-only to the privileges actually available.
 
-Endpoint contracts are grouped into families. For `available` and `required_capability`, resolve values in the order operation, family, then `endpoint_defaults`; omitted values intentionally inherit instead of repeating identical metadata. Operation `path` overrides the family `path` for routes such as public share inspection or workspace FastAPI APIs.
+Endpoint contracts are grouped into families. For `available` and `required_capability`, resolve values in the order operation, family, then `endpoint_defaults`; omitted values intentionally inherit instead of repeating identical metadata. Operation `path` overrides the family `path` for routes such as workspace FastAPI APIs.
 
 The root Discovery preamble contains `skills.openkapsel_rest`. Focused section responses inherit that metadata from the root instead of repeating it. The descriptor's `manifest_url`, `entrypoint_url`, and `archive_url` are public, contain no workspace credential, and require no Authorization header. To install, download `archive_url`, verify it against `archive_sha256`, and extract the single `openkapsel-rest` directory into the AI client's skill directory. An agent that cannot install may read `entrypoint_url` and its linked files directly.
 
@@ -98,16 +98,6 @@ python3 scripts/openkapsel_http.py POST fs/write/mkdir \
 The helper uses the nearest `.openkapsel.env` by default and falls back to `OPENKAPSEL_BASE_URL` and `OPENKAPSEL_CONTROL_TOKEN`. Relative paths receive the Bearer token when it is present. Absolute URLs receive no Bearer token unless `--auth control` is explicit.
 
 Use `--output FILE` for binary downloads, `--include-headers` to inspect response headers, `--data-file FILE` for raw request bodies, and `--header 'Name: value'` for protocol-specific headers.
-
-## Control-only raw transfer aliases
-
-The server also accepts these routes under the service base, without a URL token:
-
-- `GET|HEAD|PUT <service-base>/transfer/fs/content?...`
-- `GET|HEAD|PATCH|DELETE <service-base>/transfer/upload/status/<upload_id>`
-- `POST <service-base>/transfer/upload/commit/<upload_id>`
-
-They require the Bearer control token, which selects the token record. There is no control-only alias for creating an upload session; create it through `<workspace_url>/upload/create` first. Prefer the canonical workspace routes unless a returned transfer URL specifically uses `/transfer`.
 
 ## Errors and retries
 
