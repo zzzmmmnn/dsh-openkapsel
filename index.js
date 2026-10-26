@@ -658,7 +658,7 @@ export function apply(ctx, config = {}) {
         'Send a generic request to the selected OpenKapsel workspace through the openkapsel_http helper and return the parsed (or raw) response. Use it for surfaces beyond the typed tools — Context except Plan updates, Memory, preview, schedules, and advanced mapping operations — by following the `openkapsel-rest` skill (load it with the `skill` tool). Use kapsel_plan_update for Plan updates and completion.',
       parameters: {
         method: { type: 'string', required: true, enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'], description: 'HTTP method.' },
-        endpoint: { type: 'string', required: true, description: 'Workspace-relative path (e.g. "fs/query/list", "context") or a control-authenticated /transfer/ URL.' },
+        endpoint: { type: 'string', required: true, description: 'Workspace-relative REST endpoint only (e.g. "fs/query/list", "upload/create", "fs/transfer/<id>"). Absolute /transfer/ ticket URLs are obsolete.' },
         query: { type: 'object', additionalProperties: true, description: 'Query-string parameters.' },
         json: {
           type: 'object',
@@ -673,6 +673,10 @@ export function apply(ctx, config = {}) {
       output: { schema: { type: 'object', additionalProperties: true }, render: renderText },
       async execute(args, exec) {
         const method = String(args.method).toUpperCase();
+        const endpoint = String(args.endpoint ?? '');
+        if (!endpoint || /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(endpoint)) {
+          throw new Error('Use a workspace-relative OpenKapsel REST endpoint; absolute transfer URLs are unsupported');
+        }
         const mappingRpcMatch = /^\/?mapping\/([A-Za-z0-9][A-Za-z0-9_-]{0,63})\/rpc\/([a-z][a-z0-9_]{0,31})\/([a-z][a-z0-9_]{0,31})(?:\?|$)/.exec(args.endpoint);
         const serverRpcMatch = /^\/?rpc\/([a-z][a-z0-9_]{0,31})\/([a-z][a-z0-9_]{0,31})(?:\?|$)/.exec(args.endpoint);
         let rpcWrite = false;

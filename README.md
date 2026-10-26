@@ -253,7 +253,7 @@ isolation from Standard mode, successful `kapsel_config` initialization,
 Python error propagation, and a subsequent file listing. No model or external
 OpenKapsel workspace is contacted.
 
-Version 0.9.6 uses the DSH 0.2 Shell process-handle API
+Version 0.9.7 uses the DSH 0.2 Shell process-handle API
 (`execute(spec)` followed by `result()`) for both Python helpers. The legacy
 `run(spec)` API remains supported for older explicit integrations.
 

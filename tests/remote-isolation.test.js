@@ -342,6 +342,13 @@ test('two agents mutate only their own remote workspace and never the local cwd'
     assert.equal(registered.get('kapsel_http').parameters.properties.json.type, 'object');
 
     const requestsBeforeInvalidJson = requestLog.length;
+    await assert.rejects(registered.get('kapsel_http').execute({
+      method: 'GET', endpoint: 'https://example.test/kapsel/transfer/fs/content',
+    }, { agent: agentA, signal }), /workspace-relative.*absolute transfer URLs are unsupported/);
+    await assert.rejects(registered.get('kapsel_http').execute({
+      method: 'GET', endpoint: '//example.test/upload/create',
+    }, { agent: agentA, signal }), /workspace-relative.*absolute transfer URLs are unsupported/);
+    assert.equal(requestLog.length, requestsBeforeInvalidJson);
     await assert.rejects(
       registered.get('kapsel_http').execute({
         method: 'PATCH',
